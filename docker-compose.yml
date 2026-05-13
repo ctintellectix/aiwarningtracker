@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5087:8080"
+    volumes:
+      - api-data:/app/data
+    environment:
+      ConnectionStrings__AiCapex: "Data Source=/app/data/ai-capex-monitor.db"
+
+  frontend:
+    image: node:24-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: "http://localhost:5087"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - api
+
+volumes:
+  api-data:
