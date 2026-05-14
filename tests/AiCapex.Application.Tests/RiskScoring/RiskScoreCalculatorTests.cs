@@ -22,7 +22,7 @@ public class RiskScoreCalculatorTests
         var snapshot = new RiskScoreCalculator(weights).Calculate(inputs);
 
         Assert.Equal(64, snapshot.Score);
-        Assert.Equal("Slowdown forming", snapshot.Band);
+        Assert.Equal("Healthy expansion", snapshot.Band);
     }
 
     [Fact]
@@ -41,16 +41,17 @@ public class RiskScoreCalculatorTests
         var snapshot = new RiskScoreCalculator(RiskScoreWeights.Default).Calculate(inputs);
 
         Assert.Equal(100, snapshot.Score);
-        Assert.Equal("Capex rollover risk", snapshot.Band);
+        Assert.Equal("Bullish acceleration", snapshot.Band);
     }
 
     [Theory]
-    [InlineData(25, "Bullish acceleration")]
-    [InlineData(45, "Healthy expansion")]
-    [InlineData(60, "Watch zone")]
-    [InlineData(75, "Slowdown forming")]
-    [InlineData(76, "Capex rollover risk")]
-    public void Assigns_risk_bands_from_score(int score, string expectedBand)
+    [InlineData(0, "Capex rollover risk")]
+    [InlineData(25, "Slowdown forming")]
+    [InlineData(40, "Watch zone")]
+    [InlineData(55, "Healthy expansion")]
+    [InlineData(75, "Bullish acceleration")]
+    [InlineData(100, "Bullish acceleration")]
+    public void Assigns_expansion_bands_from_score(int score, string expectedBand)
     {
         Assert.Equal(expectedBand, RiskScoreCalculator.GetBand(score));
     }

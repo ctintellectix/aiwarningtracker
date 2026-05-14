@@ -84,6 +84,19 @@ export type TranscriptSignal = {
   publishedDate: string;
 };
 
+export type TranscriptResult = {
+  ticker: string;
+  fiscalYear: number;
+  fiscalQuarter: number;
+  market: string | null;
+  callDate: string | null;
+  provider: string;
+  title: string;
+  rawText: string;
+  sourceUrl: string | null;
+  confidenceScore: number;
+};
+
 export type Alert = {
   id: number;
   severity: "Info" | "Warning" | "Critical";
@@ -99,6 +112,65 @@ export type ManualEntry = {
   scoreImpact: number;
   summary: string;
   sourceTitle: string;
+};
+
+export type DataSourceStatus = {
+  source: string;
+  isConfigured: boolean;
+  lastSuccessfulImport: string | null;
+  message: string;
+};
+
+export type SecImportResult = {
+  ticker: string;
+  usedLiveData: boolean;
+  factsImported: number;
+  metricsImported: number;
+  message: string;
+};
+
+export type ImportResult = {
+  source: string;
+  isConfigured: boolean;
+  documentsImported: number;
+  signalsImported: number;
+  message: string;
+  itemsFetched: number;
+  documentsSkipped: number;
+};
+
+export type BulkImportItem = {
+  ticker: string;
+  success: boolean;
+  message: string;
+  documentsImported: number;
+  signalsImported: number;
+};
+
+export type BulkImportResult = {
+  source: string;
+  companiesProcessed: number;
+  successCount: number;
+  failureCount: number;
+  documentsImported: number;
+  signalsImported: number;
+  results: BulkImportItem[];
+};
+
+export type AllImportResult = {
+  sec: BulkImportResult;
+  transcripts: BulkImportResult;
+  rss: ImportResult;
+};
+
+export type CompanyFinancials = {
+  company: Company;
+  capex: Metric[];
+  operatingCashFlow: Metric[];
+  capexRatio: Metric[];
+  revenue: Metric[];
+  debt: Metric[];
+  sources: SourceDocument[];
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -117,6 +189,37 @@ export const api = {
   transcripts: () => getJson<TranscriptSignal[]>("/api/transcripts/signals"),
   history: () => getJson<QuarterScore[]>("/api/risk-scores/history"),
   alerts: () => getJson<Alert[]>("/api/alerts"),
+  dataSources: () => getJson<DataSourceStatus[]>("/api/settings/data-sources"),
+  importSec: async (ticker: string) => {
+    const response = await fetch(`${API_BASE}/api/import/sec/${ticker}`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`SEC import failed: ${response.status}`);
+    }
+    return response.json() as Promise<SecImportResult>;
+  },
+  importSecAll: async () => {
+    const response = await fetch(`${API_BASE}/api/import/sec/all`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`Bulk SEC import failed: ${response.status}`);
+    }
+    return response.json() as Promise<BulkImportResult>;
+  },
+  transcript: (ticker: string, year: number, quarter: number) => getJson<TranscriptResult>(`/api/transcripts/${ticker}/${year}/${quarter}`),
+  importRss: async () => {
+    const response = await fetch(`${API_BASE}/api/import/rss`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`RSS import failed: ${response.status}`);
+    }
+    return response.json() as Promise<ImportResult>;
+  },
+  importAll: async () => {
+    const response = await fetch(`${API_BASE}/api/import/all`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`Bulk import failed: ${response.status}`);
+    }
+    return response.json() as Promise<AllImportResult>;
+  },
+  companyFinancials: (ticker: string) => getJson<CompanyFinancials>(`/api/companies/${ticker}/financials`),
   manualEntry: async (entry: ManualEntry) => {
     const response = await fetch(`${API_BASE}/api/manual-entry`, {
       method: "POST",

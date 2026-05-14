@@ -7,27 +7,49 @@ namespace AiCapex.Infrastructure.Persistence;
 
 public static class SeedData
 {
-    public static async Task EnsureSeededAsync(AiCapexDbContext db, CancellationToken cancellationToken = default)
+    private static readonly string[] SeedSignalNames =
+    [
+        "Hyperscaler capex guidance mostly hold after prior raises",
+        "HBM allocation remains tight",
+        "CoWoS bottleneck improving gradually",
+        "Power availability delays selected data center ramps",
+        "Inference monetization evidence broadens",
+        "Capex intensity consumes more OCF"
+    ];
+
+    private static readonly string[] SeedAlertTitles =
+    [
+        "Risk score rose 11 points",
+        "Power commentary worsened"
+    ];
+
+    public static Task EnsureSeededAsync(AiCapexDbContext db, CancellationToken cancellationToken = default) =>
+        EnsureSeededAsync(db, new SeedDataOptions(), cancellationToken);
+
+    public static async Task EnsureSeededAsync(AiCapexDbContext db, SeedDataOptions options, CancellationToken cancellationToken = default)
     {
-        await db.Database.EnsureCreatedAsync(cancellationToken);
+        await SchemaUpgrade.EnsureCompatibleSchemaAsync(db, cancellationToken);
 
         var hadExistingCompanies = await db.Companies.AnyAsync(cancellationToken);
         var trackedCompanies = new[]
         {
-            new Company { Ticker = "MSFT", Name = "Microsoft", Segment = "Hyperscaler" },
-            new Company { Ticker = "AMZN", Name = "Amazon", Segment = "Hyperscaler" },
-            new Company { Ticker = "GOOGL", Name = "Alphabet", Segment = "Hyperscaler" },
-            new Company { Ticker = "META", Name = "Meta Platforms", Segment = "Hyperscaler" },
-            new Company { Ticker = "ORCL", Name = "Oracle", Segment = "Cloud infrastructure" },
-            new Company { Ticker = "NVDA", Name = "NVIDIA", Segment = "Accelerators" },
-            new Company { Ticker = "AMD", Name = "Advanced Micro Devices", Segment = "Accelerators" },
-            new Company { Ticker = "MU", Name = "Micron", Segment = "Memory/HBM" },
-            new Company { Ticker = "SNDK", Name = "SanDisk", Segment = "Memory/HBM" },
-            new Company { Ticker = "ASML", Name = "ASML", Segment = "Semicap" },
-            new Company { Ticker = "TSM", Name = "TSMC", Segment = "Foundry/Packaging" },
-            new Company { Ticker = "AVGO", Name = "Broadcom", Segment = "Networking/ASIC" },
-            new Company { Ticker = "ANET", Name = "Arista Networks", Segment = "Networking" },
-            new Company { Ticker = "VRT", Name = "Vertiv", Segment = "Power/Cooling" }
+            Company("MSFT", "Microsoft", "Hyperscaler", "0000789019", "nasdaq", isHyperscaler: true),
+            Company("AMZN", "Amazon", "Hyperscaler", "0001018724", "nasdaq", isHyperscaler: true),
+            Company("GOOGL", "Alphabet", "Hyperscaler", "0001652044", "nasdaq", isHyperscaler: true),
+            Company("META", "Meta Platforms", "Hyperscaler", "0001326801", "nasdaq", isHyperscaler: true),
+            Company("ORCL", "Oracle", "Cloud infrastructure", "0001341439", "nyse", isHyperscaler: true),
+            Company("NVDA", "NVIDIA", "Accelerators", "0001045810", "nasdaq", isSemiconductor: true),
+            Company("AMD", "Advanced Micro Devices", "Accelerators", "0000002488", "nasdaq", isSemiconductor: true),
+            Company("AVGO", "Broadcom", "Networking/ASIC", "0001730168", "nasdaq", isSemiconductor: true),
+            Company("MU", "Micron", "Memory/HBM", "0000723125", "nasdaq", isSemiconductor: true),
+            Company("SNDK", "SanDisk", "Memory/HBM", null, "nasdaq", isSemiconductor: true),
+            Company("ASML", "ASML", "Semicap", null, "nasdaq", isSemiconductor: true),
+            Company("TSM", "TSMC", "Foundry/Packaging", null, "nyse", isSemiconductor: true),
+            Company("ANET", "Arista Networks", "Networking", "0001596532", "nyse", isDataCenterInfrastructure: true),
+            Company("VRT", "Vertiv", "Power/Cooling", "0001674101", "nyse", isDataCenterInfrastructure: true),
+            Company("SMCI", "Super Micro Computer", "AI servers", "0001375365", "nasdaq", isDataCenterInfrastructure: true),
+            Company("DELL", "Dell Technologies", "AI servers", "0001571996", "nyse", isDataCenterInfrastructure: true),
+            Company("MRVL", "Marvell Technology", "Networking/ASIC", "0001835632", "nasdaq", isSemiconductor: true)
         };
 
         var existingTickers = await db.Companies.Select(x => x.Ticker).ToListAsync(cancellationToken);
@@ -41,8 +63,34 @@ public static class SeedData
             await db.SaveChangesAsync(cancellationToken);
         }
 
+        foreach (var tracked in trackedCompanies)
+        {
+            var existing = await db.Companies.SingleAsync(x => x.Ticker == tracked.Ticker, cancellationToken);
+            existing.Cik ??= tracked.Cik;
+            existing.Sector ??= tracked.Sector;
+            existing.Industry ??= tracked.Industry;
+            existing.ExchangeMarket ??= tracked.ExchangeMarket;
+            existing.IsHyperscaler = tracked.IsHyperscaler;
+            existing.IsSemiconductor = tracked.IsSemiconductor;
+            existing.IsDataCenterInfrastructure = tracked.IsDataCenterInfrastructure;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+
+        if (!options.UseSampleData)
+        {
+            if (options.PurgeSampleDataWhenDisabled)
+            {
+                await PurgeSampleDataAsync(db, cancellationToken);
+            }
+
+            return;
+        }
+
         if (hadExistingCompanies)
         {
+            var existingCompaniesForBackfill = await db.Companies.ToListAsync(cancellationToken);
+            var latestQuarter = await EnsureFiscalQuarterAsync(db, 2026, 1, cancellationToken);
+            await EnsureSampleTranscriptsAsync(db, existingCompaniesForBackfill, latestQuarter, cancellationToken);
             return;
         }
 
@@ -82,35 +130,16 @@ public static class SeedData
 
         var signals = new[]
         {
-            Signal(null, latest, RiskScoreCategory.HyperscalerCapexRevisionTrend, "Hyperscaler capex guidance mostly hold after prior raises", SignalDirection.Bearish, 32, "MSFT, AMZN, GOOGL, and META still expand, but revision momentum cooled."),
-            Signal(companies.Single(x => x.Ticker == "MU"), latest, RiskScoreCategory.HbmDramPricingAllocation, "HBM allocation remains tight", SignalDirection.Bullish, -28, "HBM demand exceeds supply and long-term agreements support pricing."),
+            Signal(null, latest, RiskScoreCategory.HyperscalerCapexRevisionTrend, "Hyperscaler capex guidance mostly hold after prior raises", SignalDirection.Bearish, -32, "MSFT, AMZN, GOOGL, and META still expand, but revision momentum cooled."),
+            Signal(companies.Single(x => x.Ticker == "MU"), latest, RiskScoreCategory.HbmDramPricingAllocation, "HBM allocation remains tight", SignalDirection.Bullish, 28, "HBM demand exceeds supply and long-term agreements support pricing."),
             Signal(companies.Single(x => x.Ticker == "TSM"), latest, RiskScoreCategory.CowosAdvancedPackaging, "CoWoS bottleneck improving gradually", SignalDirection.Neutral, 4, "Advanced packaging capacity is still gating some deployments, but expansion continues."),
-            Signal(companies.Single(x => x.Ticker == "VRT"), latest, RiskScoreCategory.DataCenterPower, "Power availability delays selected data center ramps", SignalDirection.Bearish, 42, "Grid constraints and substation timelines are increasingly visible."),
-            Signal(companies.Single(x => x.Ticker == "NVDA"), latest, RiskScoreCategory.AiRevenueMonetization, "Inference monetization evidence broadens", SignalDirection.Bullish, -18, "AI revenue commentary remains constructive."),
-            Signal(null, latest, RiskScoreCategory.FinancialStressFreeCashFlow, "Capex intensity consumes more OCF", SignalDirection.Bearish, 36, "Capex as a percent of operating cash flow is elevated across hyperscalers.")
+            Signal(companies.Single(x => x.Ticker == "VRT"), latest, RiskScoreCategory.DataCenterPower, "Power availability delays selected data center ramps", SignalDirection.Bearish, -42, "Grid constraints and substation timelines are increasingly visible."),
+            Signal(companies.Single(x => x.Ticker == "NVDA"), latest, RiskScoreCategory.AiRevenueMonetization, "Inference monetization evidence broadens", SignalDirection.Bullish, 18, "AI revenue commentary remains constructive."),
+            Signal(null, latest, RiskScoreCategory.FinancialStressFreeCashFlow, "Capex intensity consumes more OCF", SignalDirection.Bearish, -36, "Capex as a percent of operating cash flow is elevated across hyperscalers.")
         };
         db.AddRange(signals);
 
-        var analyzer = new KeywordTranscriptAnalyzer();
-        var transcriptText = "AI infrastructure and GPU capacity remain supply constrained. HBM demand exceeds supply. Advanced packaging capacity and power availability are key constraints, though management does not see a digestion period.";
-        var transcript = new Transcript
-        {
-            CompanyId = companies.Single(x => x.Ticker == "NVDA").Id,
-            FiscalQuarterId = latest.Id,
-            PublishedDate = new DateOnly(2026, 4, 22),
-            Title = "NVIDIA Q1 2026 earnings call sample",
-            Text = transcriptText
-        };
-        db.Add(transcript);
-        await db.SaveChangesAsync(cancellationToken);
-
-        db.AddRange(analyzer.Analyze(transcriptText).Select(x => new TranscriptMention
-        {
-            TranscriptId = transcript.Id,
-            KeywordGroup = x.Group,
-            Keyword = x.Keyword,
-            Count = x.Count
-        }));
+        await EnsureSampleTranscriptsAsync(db, companies, latest, cancellationToken);
 
         db.AddRange(
             new SourceDocument { CompanyId = companies.Single(x => x.Ticker == "MSFT").Id, SourceType = SourceType.SecXbrl, Title = "Sample 10-Q XBRL capex extraction", Url = "https://www.sec.gov/", Summary = "Seeded SEC-style capex and OCF metric.", PublishedDate = latest.PeriodEnd },
@@ -136,4 +165,156 @@ public static class SeedData
             ScoreImpact = impact,
             Summary = summary
         };
+
+    private static Company Company(
+        string ticker,
+        string name,
+        string segment,
+        string? cik,
+        string? exchangeMarket,
+        bool isHyperscaler = false,
+        bool isSemiconductor = false,
+        bool isDataCenterInfrastructure = false) =>
+        new()
+        {
+            Ticker = ticker,
+            Name = name,
+            Segment = segment,
+            Cik = cik,
+            Sector = isHyperscaler ? "Technology" : isSemiconductor ? "Semiconductors" : "Industrials",
+            Industry = segment,
+            ExchangeMarket = exchangeMarket,
+            IsHyperscaler = isHyperscaler,
+            IsSemiconductor = isSemiconductor,
+            IsDataCenterInfrastructure = isDataCenterInfrastructure
+        };
+
+    private static async Task<FiscalQuarter> EnsureFiscalQuarterAsync(AiCapexDbContext db, int year, int quarterNumber, CancellationToken cancellationToken)
+    {
+        var quarter = await db.FiscalQuarters.SingleOrDefaultAsync(x => x.Year == year && x.Quarter == quarterNumber, cancellationToken);
+        if (quarter is not null)
+        {
+            return quarter;
+        }
+
+        quarter = new FiscalQuarter
+        {
+            Year = year,
+            Quarter = quarterNumber,
+            PeriodEnd = new DateOnly(year, quarterNumber * 3, DateTime.DaysInMonth(year, quarterNumber * 3))
+        };
+        db.FiscalQuarters.Add(quarter);
+        await db.SaveChangesAsync(cancellationToken);
+        return quarter;
+    }
+
+    private static async Task EnsureSampleTranscriptsAsync(AiCapexDbContext db, IReadOnlyList<Company> companies, FiscalQuarter latest, CancellationToken cancellationToken)
+    {
+        var samples = new[]
+        {
+            Sample("MSFT", "Microsoft Q1 2026 AI infrastructure sample", "AI infrastructure and data center investment remain a priority. Capital expenditures and property and equipment spending support inference and compute capacity, while power availability is a constraint."),
+            Sample("AMZN", "Amazon Q1 2026 infrastructure sample", "Capital expenditures include data center investment and infrastructure spend for accelerated computing. Demand exceeds supply in selected regions, but management continues to optimize spend."),
+            Sample("GOOGL", "Alphabet Q1 2026 AI infrastructure sample", "AI infrastructure, training cluster capacity, and inference demand are driving data center investment. Power availability and cooling constraint timelines affect some deployments."),
+            Sample("META", "Meta Q1 2026 capex sample", "Capex and data center investment remain elevated for training cluster and inference workloads. GPU capacity is capacity constrained, although utilization and monetization are closely watched."),
+            Sample("ORCL", "Oracle Q1 2026 cloud infrastructure sample", "Backlog and long-term agreement activity support cloud infrastructure spend. Data center power availability and GPU capacity influence customer deployment timing."),
+            Sample("NVDA", "NVIDIA Q1 2026 earnings call sample", "AI infrastructure and GPU capacity remain supply constrained. HBM demand exceeds supply. Advanced packaging capacity and power availability are key constraints, though management does not see a digestion period."),
+            Sample("AMD", "AMD Q1 2026 accelerator sample", "Inference and accelerated computing demand support GPU capacity plans. HBM and advanced memory allocation remain important, while customers optimize spend across platforms."),
+            Sample("AVGO", "Broadcom Q1 2026 networking sample", "AI networking backlog and multi-year agreement demand remain constructive. Advanced packaging and interconnect capacity are monitored as infrastructure deployments scale."),
+            Sample("MU", "Micron Q1 2026 HBM sample", "HBM3E and high bandwidth memory demand exceeds supply. DRAM pricing commentary remains constructive, allocation is tight, and long-term agreements support bit growth."),
+            Sample("SNDK", "SanDisk Q1 2026 memory sample", "Advanced memory demand is improving with data center AI workloads. DRAM and HBM allocation signals remain important, though pricing pressure would be a slowdown warning."),
+            Sample("ASML", "ASML Q1 2026 semicap sample", "Advanced packaging, capacity expansion, and AI infrastructure demand support customer investment. Any delay or normalization in leading-edge orders would be a warning signal."),
+            Sample("TSM", "TSMC Q1 2026 packaging sample", "CoWoS and advanced packaging capacity remain tight. Chip-on-wafer-on-substrate demand exceeds supply, and capacity expansion continues for AI accelerators."),
+            Sample("ANET", "Arista Q1 2026 networking sample", "Data center interconnect and AI networking demand remain strong. Backlog, allocation, and cloud customer capacity expansion support infrastructure momentum."),
+            Sample("VRT", "Vertiv Q1 2026 power sample", "Power availability, grid constraint, substation timing, liquid cooling, and megawatt demand remain key data center bottlenecks as AI infrastructure expands."),
+            Sample("SMCI", "Supermicro Q1 2026 AI server sample", "AI server backlog, GPU capacity, liquid cooling, and advanced memory allocation support demand. Inventory correction or lower demand would be slowdown warning language."),
+            Sample("DELL", "Dell Q1 2026 AI server sample", "AI server demand includes GPU capacity, HBM, networking, and liquid cooling. Backlog and multi-year agreement commentary indicate infrastructure momentum."),
+            Sample("MRVL", "Marvell Q1 2026 custom silicon sample", "Accelerated infrastructure, custom silicon, interconnect, and data center demand support AI revenue monetization. Customer delays would indicate moderation.")
+        };
+
+        var analyzer = new KeywordTranscriptAnalyzer();
+        foreach (var sample in samples)
+        {
+            var company = companies.SingleOrDefault(x => x.Ticker == sample.Ticker);
+            if (company is null)
+            {
+                continue;
+            }
+
+            var exists = await db.Transcripts.AnyAsync(x => x.CompanyId == company.Id && x.Title == sample.Title, cancellationToken);
+            if (exists)
+            {
+                continue;
+            }
+
+            var transcript = new Transcript
+            {
+                CompanyId = company.Id,
+                Ticker = company.Ticker,
+                Market = company.ExchangeMarket,
+                FiscalQuarterId = latest.Id,
+                FiscalYear = latest.Year,
+                FiscalQuarterNumber = latest.Quarter,
+                PublishedDate = new DateOnly(2026, 4, 22),
+                CallDate = new DateOnly(2026, 4, 22),
+                Provider = "SampleSeed",
+                Title = sample.Title,
+                Text = sample.Text,
+                RawText = sample.Text,
+                SourceUrl = $"sample://transcripts/{company.Ticker}/2026/Q1",
+                ImportedAtUtc = DateTimeOffset.UtcNow,
+                ConfidenceScore = 50
+            };
+            db.Transcripts.Add(transcript);
+            await db.SaveChangesAsync(cancellationToken);
+
+            var sentiment = analyzer.ScoreDirectionalSignal(sample.Text);
+            db.TranscriptMentions.AddRange(analyzer.Analyze(sample.Text).Select(x => new TranscriptMention
+            {
+                TranscriptId = transcript.Id,
+                KeywordGroup = x.Group,
+                Keyword = x.Keyword,
+                Count = x.Count,
+                SentimentScore = sentiment,
+                ContextSnippet = sample.Text
+            }));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static SampleTranscript Sample(string ticker, string title, string text) => new(ticker, title, text);
+
+    private sealed record SampleTranscript(string Ticker, string Title, string Text);
+
+    private static async Task PurgeSampleDataAsync(AiCapexDbContext db, CancellationToken cancellationToken)
+    {
+        var sampleTranscripts = await db.Transcripts
+            .Where(x =>
+                x.Provider == "SampleSeed" ||
+                (x.SourceUrl != null && x.SourceUrl.StartsWith("sample://")) ||
+                x.Title.Contains(" sample"))
+            .ToListAsync(cancellationToken);
+        if (sampleTranscripts.Count > 0)
+        {
+            var transcriptIds = sampleTranscripts.Select(x => x.Id).ToList();
+            db.TranscriptMentions.RemoveRange(db.TranscriptMentions.Where(x => transcriptIds.Contains(x.TranscriptId)));
+            db.Transcripts.RemoveRange(sampleTranscripts);
+        }
+
+        db.FinancialMetrics.RemoveRange(db.FinancialMetrics.Where(x => x.Source == null));
+        db.IndicatorSignals.RemoveRange(db.IndicatorSignals.Where(x => SeedSignalNames.Contains(x.Name)));
+        db.RiskScoreSnapshots.RemoveRange(db.RiskScoreSnapshots);
+        db.SourceDocuments.RemoveRange(db.SourceDocuments.Where(x =>
+            x.Url.StartsWith("sample://") ||
+            x.Url == "https://example.com/power-backlog" ||
+            x.Title.Contains("Sample")));
+        db.WatchlistAlerts.RemoveRange(db.WatchlistAlerts.Where(x => SeedAlertTitles.Contains(x.Title)));
+        await db.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SeedDataOptions
+{
+    public bool UseSampleData { get; set; } = true;
+    public bool PurgeSampleDataWhenDisabled { get; set; } = true;
 }

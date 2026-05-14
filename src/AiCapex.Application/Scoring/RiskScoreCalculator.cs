@@ -20,10 +20,10 @@ public sealed class RiskScoreCalculator(RiskScoreWeights weights)
             totalWeight += weight;
             var signal = Math.Clamp(inputByCategory.GetValueOrDefault(category, 0), -100, 100);
 
-            // Signal values are -100 bullish to +100 bearish. Convert to a 0-100 risk scale,
-            // then apply the configured category weight.
-            var categoryRisk = (signal + 100) / 2;
-            var weightedPoints = categoryRisk * weight / 100;
+            // Signal values are +100 bullish to -100 bearish. Convert to a 0-100 expansion scale
+            // where 100 means stronger capex expansion and 0 means higher slowdown/rollover risk.
+            var categoryExpansion = (100 + signal) / 2;
+            var weightedPoints = categoryExpansion * weight / 100;
             weightedScore += weightedPoints;
             contributions.Add(new RiskScoreContribution(category, signal, decimal.Round(weightedPoints, 2)));
         }
@@ -35,10 +35,10 @@ public sealed class RiskScoreCalculator(RiskScoreWeights weights)
 
     public static string GetBand(int score) => score switch
     {
-        <= 25 => "Bullish acceleration",
-        <= 45 => "Healthy expansion",
-        <= 60 => "Watch zone",
-        <= 75 => "Slowdown forming",
-        _ => "Capex rollover risk"
+        <= 24 => "Capex rollover risk",
+        <= 39 => "Slowdown forming",
+        <= 54 => "Watch zone",
+        <= 74 => "Healthy expansion",
+        _ => "Bullish acceleration"
     };
 }

@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AiCapex.Application\AiCapex.Application.csproj" />
+    <ProjectReference Include="..\..\src\AiCapex.Api\AiCapex.Api.csproj" />
     <ProjectReference Include="..\..\src\AiCapex.Domain\AiCapex.Domain.csproj" />
     <ProjectReference Include="..\..\src\AiCapex.Infrastructure\AiCapex.Infrastructure.csproj" />
   </ItemGroup>

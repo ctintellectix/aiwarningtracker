@@ -37,3 +37,29 @@ public sealed record AlertDto(int Id, AlertSeverity Severity, string Title, stri
 public sealed record SourceDocumentDto(string? Ticker, SourceType SourceType, string Title, string Url, string Summary, DateOnly PublishedDate);
 
 public sealed record ManualEntryRequest(string Ticker, string Category, decimal ScoreImpact, string Summary, string SourceTitle);
+
+public sealed record DataSourceStatusDto(string Source, bool IsConfigured, DateTimeOffset? LastSuccessfulImport, string Message);
+
+public sealed record SecImportResultDto(string Ticker, bool UsedLiveData, int FactsImported, int MetricsImported, string Message);
+
+public sealed record ImportResultDto(
+    string Source,
+    bool IsConfigured,
+    int DocumentsImported,
+    int SignalsImported,
+    string Message,
+    int ItemsFetched = 0,
+    int DocumentsSkipped = 0);
+
+public sealed record BulkImportItemDto(string Ticker, bool Success, string Message, int DocumentsImported, int SignalsImported);
+
+public sealed record BulkImportResultDto(string Source, int CompaniesProcessed, int SuccessCount, int FailureCount, int DocumentsImported, int SignalsImported, IReadOnlyList<BulkImportItemDto> Results);
+
+public sealed record CompanyFinancialsDto(
+    CompanyDto Company,
+    IReadOnlyList<MetricDto> Capex,
+    IReadOnlyList<MetricDto> OperatingCashFlow,
+    IReadOnlyList<MetricDto> CapexRatio,
+    IReadOnlyList<MetricDto> Revenue,
+    IReadOnlyList<MetricDto> Debt,
+    IReadOnlyList<SourceDocumentDto> Sources);

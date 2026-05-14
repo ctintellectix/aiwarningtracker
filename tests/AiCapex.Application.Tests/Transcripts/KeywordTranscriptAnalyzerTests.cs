@@ -30,6 +30,6 @@ public class KeywordTranscriptAnalyzerTests
 
         var signal = new KeywordTranscriptAnalyzer().ScoreDirectionalSignal(text);
 
-        Assert.True(signal < 0);
+        Assert.True(signal > 0);
     }
 }

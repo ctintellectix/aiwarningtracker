@@ -1,3 +1,4 @@
+using AiCapex.Application.Alerts;
 using AiCapex.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -5,9 +6,13 @@ namespace AiCapex.Api.Controllers;
 
 [ApiController]
 [Route("api/alerts")]
-public sealed class AlertsController(IAiCapexReadService readService) : ControllerBase
+public sealed class AlertsController(IAiCapexReadService readService, IAlertGenerationService alertGenerationService) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAlerts(CancellationToken cancellationToken) =>
         Ok(await readService.GetAlertsAsync(cancellationToken));
+
+    [HttpPost("generate")]
+    public async Task<IActionResult> Generate(CancellationToken cancellationToken) =>
+        Ok(await alertGenerationService.GenerateAsync(cancellationToken));
 }

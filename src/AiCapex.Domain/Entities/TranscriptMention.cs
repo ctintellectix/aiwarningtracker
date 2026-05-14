@@ -8,4 +8,6 @@ public sealed class TranscriptMention
     public string KeywordGroup { get; set; } = "";
     public string Keyword { get; set; } = "";
     public int Count { get; set; }
+    public decimal SentimentScore { get; set; }
+    public string? ContextSnippet { get; set; }
 }

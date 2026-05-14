@@ -21,4 +21,11 @@ public sealed class CompaniesController(IAiCapexReadService readService) : Contr
     [HttpGet("{ticker}/metrics")]
     public async Task<IActionResult> GetMetrics(string ticker, CancellationToken cancellationToken) =>
         Ok(await readService.GetCompanyMetricsAsync(ticker, cancellationToken));
+
+    [HttpGet("{ticker}/financials")]
+    public async Task<IActionResult> GetFinancials(string ticker, CancellationToken cancellationToken)
+    {
+        var financials = await readService.GetCompanyFinancialsAsync(ticker, cancellationToken);
+        return financials is null ? NotFound() : Ok(financials);
+    }
 }

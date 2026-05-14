@@ -1,6 +1,6 @@
 # AI CapEx Slowdown Monitor
 
-Developer-friendly MVP dashboard for tracking public indicators of AI infrastructure capex momentum and producing a 0-100 AI CapEx Slowdown Risk Score.
+Developer-friendly MVP dashboard for tracking public indicators of AI infrastructure capex momentum and producing a 0-100 AI CapEx Expansion Score.
 
 ## Stack
 
@@ -30,6 +30,107 @@ npm run dev
 
 Open `http://localhost:5173`. The API runs at `http://localhost:5087`.
 
+## Real Data Configuration
+
+The app remains usable without demo data when external API keys are missing by using cached real imports, RSS/source documents, and manual analyst indicator inputs.
+
+SEC EDGAR ingestion uses the official companyfacts API. SEC requires a descriptive User-Agent, so set one in `src/AiCapex.Api/appsettings.Development.json` or as an environment variable:
+
+```powershell
+$env:SEC_USER_AGENT="AiCapexSlowdownMonitor/1.0 (you@example.com)"
+```
+
+Paid transcript providers are disabled by default because FMP and Finnhub transcript endpoints require paid/professional access:
+
+```powershell
+$env:FMP_API_KEY="your-key"
+$env:FINNHUB_API_KEY="your-finnhub-key"
+```
+
+Never commit real API keys. Use user secrets, local development settings, or environment variables. To enable Finnhub for a local run, set the key and enable the feature flag:
+
+```powershell
+$env:FINNHUB_API_KEY="your-finnhub-key"
+$env:TranscriptProviders__EnableFinnhub="true"
+dotnet run --project src/AiCapex.Api/AiCapex.Api.csproj --launch-profile http
+```
+
+You can also set the flag in `src/AiCapex.Api/appsettings.Development.json`:
+
+```json
+{
+  "TranscriptProviders": {
+    "EnableFinnhub": true
+  }
+}
+```
+
+With Finnhub enabled, `GET /api/transcripts/{ticker}/{year}/{quarter}` checks cached transcripts first, then calls Finnhub. The app will still run without a Finnhub key; the provider returns no result and the fallback UX stays intact.
+
+EarningsCallBiz public transcript lookup is enabled by default and uses cached, respectful requests:
+
+```json
+"TranscriptProviders": {
+  "EarningsCallBiz": {
+    "Enabled": true,
+    "BaseUrl": "https://earningscall.biz",
+    "UserAgent": "AiCapexMonitor/1.0 (contact@example.com)",
+    "CacheDays": 7,
+    "RequestDelayMs": 1000
+  }
+}
+```
+
+## Manual Imports
+
+With the API running, trigger SEC imports manually:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:5087/api/import/sec/MSFT
+```
+
+Trigger RSS/news imports:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:5087/api/import/rss
+```
+
+Run every real-data import for all tracked companies:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:5087/api/import/all
+```
+
+This runs SEC imports, transcript provider imports for the latest four quarters per tracked ticker, RSS/news imports, then recalculates the risk score.
+
+Clear imported data while preserving tracked companies:
+
+```powershell
+dotnet run --project tools/AiCapex.DbTool/AiCapex.DbTool.csproj -- clear-imports src/AiCapex.Api/ai-capex-monitor.db
+```
+
+Transcript provider lookup:
+
+```powershell
+Invoke-RestMethod http://localhost:5087/api/transcripts/NVDA/2026/1
+Invoke-RestMethod http://localhost:5087/api/transcripts/earningscallbiz/nasdaq/hood/2026/1
+```
+
+Useful real-data endpoints:
+
+- `GET /api/settings/data-sources`
+- `POST /api/import/sec/{ticker}`
+- `POST /api/import/all`
+- `POST /api/import/rss`
+- `POST /api/alerts/generate`
+- `GET /api/transcripts/{ticker}/{year}/{quarter}`
+- `GET /api/transcripts/earningscallbiz/{market}/{ticker}/{year}/{quarter}`
+- `GET /api/companies/{ticker}/financials`
+- `GET /api/sources/documents`
+- `GET /api/risk/latest`
+- `GET /api/risk/history`
+- `GET /api/risk/latest/attribution`
+
 ## Test
 
 ```powershell
@@ -55,17 +156,42 @@ The score is configured in `src/AiCapex.Api/appsettings.json`:
 - 10% AI revenue monetization signal
 - 10% financial stress / free cash flow signal
 
-Signals are normalized from `-100` bullish to `+100` bearish, mapped to a 0-100 risk scale, and weighted into the final score.
+Signals are normalized from `-100` bearish/risk-increasing to `+100` bullish/expansion-supportive, mapped to a 0-100 expansion scale, and weighted into the final score. `100` means strong expansion momentum; `0` means high slowdown or capex rollover risk.
 
-## Seeded Data
+## Tracked And Real Data
 
-The app seeds MSFT, AMZN, GOOGL, META, ORCL, NVDA, AMD, MU, SNDK, ASML, TSM, AVGO, ANET, and VRT with sample financial metrics, transcript mentions, source documents, indicator signals, score history, and alerts.
+The app maintains the tracked company list for MSFT, AMZN, GOOGL, META, ORCL, NVDA, AMD, MU, SNDK, ASML, TSM, AVGO, ANET, VRT, SMCI, DELL, and MRVL. By default, `SeedData:UseSampleData` is `false`, so the app does not inject demo financial metrics, transcript mentions, source documents, indicator signals, score history, or alerts. When sample data is disabled, startup also purges known demo rows from the local SQLite database while preserving real SEC imports, RSS imports, manual entries, and provider transcripts.
+
+To enable demo observations for local UI testing only, set:
+
+```json
+"SeedData": {
+  "UseSampleData": true,
+  "PurgeSampleDataWhenDisabled": false
+}
+```
+
+SEC imports currently normalize likely capex, operating cash flow, revenue, and debt facts from EDGAR companyfacts JSON. Imported facts keep source URLs and source-document records, then feed the company financial charts.
+
+Transcript ingestion is provider-agnostic and direct-provider first. The default priority is cached/local transcripts, EarningsCallBiz public pages, then optional paid/direct providers such as Finnhub and FMP when their feature flags are enabled. Manual transcript upload, company IR URL discovery, and public web transcript discovery have been removed. The all-import workflow attempts transcript imports for the latest four quarters for every tracked ticker.
+
+EarningsCallBiz URLs use `https://earningscall.biz/e/{market}/s/{ticker}/y/{year}/q/q{quarter}`. The `market` segment must match the source site, with common values such as `nasdaq` and `nyse`. Imported transcripts store the source URL for attribution, use an app User-Agent, cache successful results for seven days, cache not-found results for twelve hours, and fall back to cached data when rate-limited. For commercial use, review earningscall.biz terms or use an official/licensed API.
+
+RSS/news imports read `NewsFeeds` from `src/AiCapex.Api/appsettings.json`, store deduped source documents by URL, and create keyword-derived indicator signals.
+
+Dashboard scoring is period-aware. SEC metrics preserve company-specific fiscal period end dates, and score calculations use the latest available company records up to the current calendar quarter end rather than letting one provider's future fiscal label define the whole dashboard. Transcript records keep their source fiscal label plus call/period date where available; provider labels should still be reviewed for edge cases because transcript sites may not always align perfectly to issuer fiscal calendars.
+
+Watchlist alerts are generated after imports, manual entries, transcript imports, explicit scoring runs, and app startup recalculation. The first rule set covers expansion score deterioration of 10+ points, capex/OCF above 75%, material increases in slowdown-warning transcript terms, and weakening HBM/DRAM, CoWoS/packaging, or data center/power signals. Alerts are deduped by title and message.
+
+## Limitations And Disclaimer
+
+SEC XBRL tags vary by issuer and foreign issuers may not expose the same companyfacts data as U.S. filers. FMP and Finnhub transcript APIs can require paid access depending on plan and endpoint. RSS feeds can change formats or rate-limit requests, so imports are best treated as source-monitoring inputs rather than a complete news dataset.
 
 ## TODOs For Real Data
 
-- Connect SEC EDGAR XBRL companyfacts/submissions ingestion.
-- Connect earnings-call transcript providers.
-- Add RSS/news ingestion with source reliability scoring.
+- Add scheduled transcript and RSS import jobs.
+- Add full Whisper/faster-whisper audio transcription.
 - Add PostgreSQL provider and migrations.
-- Add scheduled ingestion jobs.
 - Add authentication and manual-entry roles.
+
+This project is for monitoring and research workflows only. It is not investment advice.

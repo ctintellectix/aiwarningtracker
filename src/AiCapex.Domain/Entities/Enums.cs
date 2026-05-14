@@ -12,7 +12,12 @@ public enum MetricKind
     QuarterlyCapex,
     OperatingCashFlow,
     FreeCashFlowEstimate,
-    CapexAsPercentOfOperatingCashFlow
+    CapexAsPercentOfOperatingCashFlow,
+    Revenue,
+    Debt,
+    TtmCapex,
+    CapexQoqGrowth,
+    CapexYoyGrowth
 }
 
 public enum SignalDirection
@@ -32,6 +37,7 @@ public enum AlertSeverity
 public enum SourceType
 {
     SecXbrl,
+    SecFiling,
     Transcript,
     ManualEntry,
     NewsRss
