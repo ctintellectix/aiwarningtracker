@@ -5,5 +5,9 @@ namespace AiCapex.Application.Ingestion;
 public interface ITranscriptImportService
 {
     Task<ImportResultDto> ImportAsync(string ticker, CancellationToken cancellationToken = default);
-    Task<BulkImportResultDto> ImportRecentQuartersAsync(IReadOnlyList<string> tickers, int quarterCount = 4, CancellationToken cancellationToken = default);
+    Task<BulkImportResultDto> ImportRecentQuartersAsync(
+        IReadOnlyList<string> tickers,
+        int quarterCount = 4,
+        Action<int, int, string>? onCompanyStarted = null,
+        CancellationToken cancellationToken = default);
 }

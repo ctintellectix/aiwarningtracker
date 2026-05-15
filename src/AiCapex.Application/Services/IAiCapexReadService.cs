@@ -10,7 +10,6 @@ public interface IAiCapexReadService
     Task<IReadOnlyList<MetricDto>> GetCompanyMetricsAsync(string ticker, CancellationToken cancellationToken = default);
     Task<CompanyFinancialsDto?> GetCompanyFinancialsAsync(string ticker, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CategoryStatusDto>> GetIndicatorTrendsAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<TranscriptSignalDto>> GetTranscriptSignalsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<QuarterScoreDto>> GetRiskScoreHistoryAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AlertDto>> GetAlertsAsync(CancellationToken cancellationToken = default);
 }

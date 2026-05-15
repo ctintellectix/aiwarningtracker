@@ -1,5 +1,7 @@
 using AiCapex.Application.Dashboard;
 using AiCapex.Application.Ingestion;
+using AiCapex.Application.Analysis;
+using AiCapex.Application.Scoring;
 using AiCapex.Application.Transcripts;
 using AiCapex.Domain.Entities;
 using AiCapex.Infrastructure.Persistence;
@@ -9,7 +11,11 @@ namespace AiCapex.Infrastructure.Transcripts;
 
 public static class TranscriptStorage
 {
-    public static async Task<ImportResultDto> StoreAsync(AiCapexDbContext db, TranscriptResult transcript, CancellationToken cancellationToken)
+    public static async Task<ImportResultDto> StoreAsync(
+        AiCapexDbContext db,
+        IDocumentNarrativeAnalysisService narrativeAnalysis,
+        TranscriptResult transcript,
+        CancellationToken cancellationToken)
     {
         var ticker = transcript.Ticker.ToUpperInvariant();
         await SchemaUpgrade.EnsureCompatibleSchemaAsync(db, cancellationToken);
@@ -55,38 +61,58 @@ public static class TranscriptStorage
         db.Transcripts.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
 
-        var analyzer = new KeywordTranscriptAnalyzer();
-        var mentions = analyzer.Analyze(transcript.RawText);
-        var sentiment = analyzer.ScoreDirectionalSignal(transcript.RawText);
-        db.TranscriptMentions.AddRange(mentions.Select(x => new TranscriptMention
-        {
-            TranscriptId = entity.Id,
-            KeywordGroup = x.Group,
-            Keyword = x.Keyword,
-            Count = x.Count,
-            SentimentScore = sentiment,
-            ContextSnippet = BuildSnippet(transcript.RawText, x.Keyword)
-        }));
+        var analysis = await narrativeAnalysis.AnalyzeAsync(
+            new DocumentNarrativeAnalysisRequest("Transcript", transcript.Title, transcript.RawText, ticker),
+            cancellationToken);
 
-        db.SourceDocuments.Add(new SourceDocument
+        var sourceDocument = new SourceDocument
         {
             CompanyId = company.Id,
             SourceType = SourceType.Transcript,
             Provider = transcript.Provider,
             Title = transcript.Title,
             Url = transcript.SourceUrl ?? $"transcript://{ticker}/{transcript.FiscalYear}/Q{transcript.FiscalQuarter}",
-            Summary = $"Imported transcript with {mentions.Sum(x => x.Count)} keyword hits.",
+            Summary = analysis.Summary,
             PublishedDate = transcript.CallDate ?? quarter.PeriodEnd,
             PublishedAtUtc = (transcript.CallDate ?? quarter.PeriodEnd).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
             RetrievedAtUtc = DateTimeOffset.UtcNow,
             RawText = transcript.RawText.Length > 8000 ? transcript.RawText[..8000] : transcript.RawText,
-            Snippet = BuildSnippet(transcript.RawText, mentions.FirstOrDefault()?.Keyword ?? ""),
+            Snippet = BuildSnippet(transcript.RawText, ""),
             CredibilityWeight = 0.9m,
-            Status = "Imported"
-        });
+            Status = "Imported",
+            AnalysisProvider = analysis.Provider,
+            AnalysisModel = analysis.Model,
+            AnalysisJson = analysis.RawJson
+        };
+        db.SourceDocuments.Add(sourceDocument);
+        await db.SaveChangesAsync(cancellationToken);
+
+        foreach (var signal in analysis.Signals)
+        {
+            var interpretedScore = SignalScoreInterpreter.ToScoringSignal(
+                signal.ScoreImpact,
+                analysis.UsedFallback ? "Transcript keyword fallback signal" : "Transcript AI narrative signal");
+            var displayScore = SignalScoreInterpreter.ToDisplaySignal(interpretedScore);
+            db.IndicatorSignals.Add(new IndicatorSignal
+            {
+                CompanyId = company.Id,
+                SignalDate = transcript.CallDate ?? quarter.PeriodEnd,
+                FiscalQuarterId = quarter.Id,
+                Category = signal.Category,
+                Name = transcript.Title,
+                SignalName = analysis.UsedFallback ? "Transcript keyword fallback signal" : "Transcript AI narrative signal",
+                Direction = displayScore > 1 ? SignalDirection.Bullish : displayScore < -1 ? SignalDirection.Bearish : SignalDirection.Neutral,
+                ScoreImpact = signal.ScoreImpact,
+                Strength = Math.Min(100, Math.Abs((int)Math.Round(signal.ScoreImpact))),
+                Confidence = signal.Confidence,
+                SourceDocumentId = sourceDocument.Id,
+                Summary = signal.Summary,
+                Explanation = signal.Explanation
+            });
+        }
 
         await db.SaveChangesAsync(cancellationToken);
-        return new ImportResultDto(transcript.Provider, true, 1, mentions.Count, "Transcript imported.");
+        return new ImportResultDto(transcript.Provider, true, 1, analysis.Signals.Count, "Transcript imported.");
     }
 
     private static async Task<FiscalQuarter> EnsureFiscalQuarterAsync(AiCapexDbContext db, int year, int quarterNumber, CancellationToken cancellationToken)

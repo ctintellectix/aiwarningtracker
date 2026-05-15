@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiCapex.Infrastructure.Scoring;
 
-public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringService
+public sealed class RiskScoringService(AiCapexDbContext db, RiskScoreWeights weights) : IRiskScoringService
 {
     public async Task<RiskScoreRunResultDto> RecalculateAsync(CancellationToken cancellationToken = default)
         => await RecalculateAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
@@ -25,7 +25,7 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
         var recentQuarters = await db.FiscalQuarters
             .Where(x => x.PeriodEnd <= currentQuarter.PeriodEnd)
             .OrderByDescending(x => x.PeriodEnd)
-            .Take(3)
+            .Take(8)
             .OrderBy(x => x.PeriodEnd)
             .ToListAsync(cancellationToken);
         var existingSnapshotQuarterIds = await db.RiskScoreSnapshots
@@ -44,7 +44,8 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
     {
         var signals = await db.IndicatorSignals
             .Include(x => x.FiscalQuarter)
-            .Where(x => x.FiscalQuarter != null && x.FiscalQuarter.PeriodEnd <= quarter.PeriodEnd)
+            .Where(x => x.FiscalQuarter != null &&
+                x.FiscalQuarter.PeriodEnd <= quarter.PeriodEnd)
             .ToListAsync(cancellationToken);
         signals = signals
             .GroupBy(x => new { x.Category, x.CompanyId })
@@ -54,12 +55,8 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
             .Include(x => x.Company)
             .Include(x => x.FiscalQuarter)
             .ToListAsync(cancellationToken), quarter.PeriodEnd);
-        var transcriptMentions = LatestTranscriptMentions(await db.TranscriptMentions
-            .Include(x => x.Transcript)!.ThenInclude(x => x!.FiscalQuarter)
-            .ToListAsync(cancellationToken), quarter.PeriodEnd);
-
-        var inputs = BuildInputs(signals, metrics, transcriptMentions);
-        var result = new RiskScoreCalculator(RiskScoreWeights.Default).Calculate(inputs);
+        var inputs = BuildInputs(signals, metrics);
+        var result = new RiskScoreCalculator(weights).Calculate(inputs);
         var previousScore = await GetPreviousQuarterScoreAsync(quarter, cancellationToken);
         var snapshot = await db.RiskScoreSnapshots.SingleOrDefaultAsync(x => x.FiscalQuarterId == quarter.Id, cancellationToken);
         if (snapshot is null)
@@ -128,24 +125,7 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
             .ToList();
     }
 
-    private static IReadOnlyList<TranscriptMention> LatestTranscriptMentions(IReadOnlyList<TranscriptMention> mentions, DateOnly asOfPeriodEnd)
-    {
-        var latestTranscriptIds = mentions
-            .Where(x => x.Transcript is not null && TranscriptPeriodEnd(x.Transcript) <= asOfPeriodEnd)
-            .GroupBy(x => x.Transcript!.CompanyId)
-            .Select(x => x
-                .OrderByDescending(v => TranscriptPeriodEnd(v.Transcript!))
-                .ThenByDescending(v => v.Transcript!.ImportedAtUtc)
-                .First()
-                .TranscriptId)
-            .ToHashSet();
-
-        return mentions.Where(x => latestTranscriptIds.Contains(x.TranscriptId)).ToList();
-    }
-
     private static DateOnly MetricPeriodEnd(FinancialMetric metric) => metric.PeriodEndDate ?? metric.FiscalQuarter?.PeriodEnd ?? DateOnly.MinValue;
-
-    private static DateOnly TranscriptPeriodEnd(Transcript transcript) => transcript.PeriodEndDate ?? transcript.CallDate ?? transcript.FiscalQuarter?.PeriodEnd ?? transcript.PublishedDate;
 
     private async Task<int> GetPreviousQuarterScoreAsync(FiscalQuarter current, CancellationToken cancellationToken)
     {
@@ -160,39 +140,20 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
         return previous?.Score ?? 50;
     }
 
-    private static IReadOnlyList<RiskScoreInput> BuildInputs(IReadOnlyList<IndicatorSignal> signals, IReadOnlyList<FinancialMetric> metrics, IReadOnlyList<TranscriptMention> transcriptMentions)
+    private static IReadOnlyList<RiskScoreInput> BuildInputs(IReadOnlyList<IndicatorSignal> signals, IReadOnlyList<FinancialMetric> metrics)
     {
         var inputs = signals
             .GroupBy(x => x.Category)
-            .Select(x => new RiskScoreInput(x.Key, x.Average(v => v.ScoreImpact)))
+            .Select(x => new RiskScoreInput(
+                x.Key,
+                CategorySignalAggregator.Aggregate(x.Select(v =>
+                    (SignalScoreInterpreter.ToScoringSignal(v.ScoreImpact, v.SignalName), v.Confidence)))))
             .ToList();
-
-        foreach (var mentionSignal in TranscriptSignals(transcriptMentions))
-        {
-            AddOrBlend(inputs, mentionSignal.Category, mentionSignal.Signal);
-        }
 
         AddOrBlend(inputs, RiskScoreCategory.FinancialStressFreeCashFlow, FinancialStressSignal(metrics));
         AddOrBlend(inputs, RiskScoreCategory.HyperscalerCapexRevisionTrend, HyperscalerCapexSignal(metrics));
         return inputs;
     }
-
-    private static IEnumerable<RiskScoreInput> TranscriptSignals(IReadOnlyList<TranscriptMention> mentions)
-    {
-        return mentions
-            .GroupBy(x => MapTranscriptGroup(x.KeywordGroup))
-            .Select(x => new RiskScoreInput(x.Key, x.Average(v => v.SentimentScore)));
-    }
-
-    private static RiskScoreCategory MapTranscriptGroup(string group) => group switch
-    {
-        "Memory/HBM" => RiskScoreCategory.HbmDramPricingAllocation,
-        "Packaging" => RiskScoreCategory.CowosAdvancedPackaging,
-        "Power" => RiskScoreCategory.DataCenterPower,
-        "Capex" => RiskScoreCategory.HyperscalerCapexRevisionTrend,
-        "Financial stress" => RiskScoreCategory.FinancialStressFreeCashFlow,
-        _ => RiskScoreCategory.AiRevenueMonetization
-    };
 
     private static decimal FinancialStressSignal(IReadOnlyList<FinancialMetric> metrics)
     {
@@ -205,9 +166,8 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
             return 0;
         }
 
-        // Capex/OCF above 50% weakens the expansion signal; below 30% is balance-sheet supportive.
         var averageRatio = capexRatios.Average();
-        return Math.Clamp((50m - averageRatio) * 2m, -80m, 40m);
+        return DerivedFinancialSignalScorer.ScoreCapexOcf(averageRatio);
     }
 
     private static decimal HyperscalerCapexSignal(IReadOnlyList<FinancialMetric> metrics)
@@ -222,9 +182,8 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
             return 0;
         }
 
-        // Accelerating capex is bullish for near-term buildout; falling capex growth raises rollover risk.
         var averageGrowth = growth.Average();
-        return Math.Clamp(averageGrowth, -70m, 60m);
+        return DerivedFinancialSignalScorer.ScoreCapexGrowth(averageGrowth);
     }
 
     private static void AddOrBlend(List<RiskScoreInput> inputs, RiskScoreCategory category, decimal signal)
@@ -248,6 +207,6 @@ public sealed class RiskScoringService(AiCapexDbContext db) : IRiskScoringServic
     private static int CategoryRisk(RiskScoreResult result, RiskScoreCategory category)
     {
         var signal = result.Contributions.Single(x => x.Category == category).Signal;
-        return (int)Math.Round(Math.Clamp((100m + signal) / 2m, 0m, 100m), MidpointRounding.AwayFromZero);
+        return (int)Math.Round(Math.Clamp((10m + signal) * 5m, 0m, 100m), MidpointRounding.AwayFromZero);
     }
 }

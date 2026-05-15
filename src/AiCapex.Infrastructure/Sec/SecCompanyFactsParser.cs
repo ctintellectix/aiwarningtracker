@@ -15,64 +15,74 @@ public static class SecCompanyFactsParser
         "SalesRevenueNet",
         "LongTermDebt",
         "LongTermDebtCurrent",
-        "ShortTermBorrowings"
+        "ShortTermBorrowings",
+        "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+        "CashFlowsFromUsedInOperations",
+        "Revenue",
+        "Borrowings",
+        "CurrentBorrowings",
+        "NoncurrentBorrowings"
     };
 
     public static IReadOnlyList<SecFactValue> Parse(string json, string sourceUrl)
     {
         using var document = JsonDocument.Parse(json);
-        if (!document.RootElement.TryGetProperty("facts", out var facts) ||
-            !facts.TryGetProperty("us-gaap", out var usGaap))
+        if (!document.RootElement.TryGetProperty("facts", out var facts))
         {
             return [];
         }
 
         var values = new List<SecFactValue>();
-        foreach (var tagProperty in usGaap.EnumerateObject())
+        foreach (var taxonomyProperty in facts.EnumerateObject()
+            .Where(x => x.Name.Equals("us-gaap", StringComparison.OrdinalIgnoreCase) ||
+                        x.Name.Equals("ifrs-full", StringComparison.OrdinalIgnoreCase)))
         {
-            if (!Tags.Contains(tagProperty.Name) ||
-                !tagProperty.Value.TryGetProperty("units", out var units))
+            foreach (var tagProperty in taxonomyProperty.Value.EnumerateObject())
             {
-                continue;
-            }
-
-            foreach (var unitProperty in units.EnumerateObject())
-            {
-                if (unitProperty.Value.ValueKind != JsonValueKind.Array)
+                if (!Tags.Contains(tagProperty.Name) ||
+                    !tagProperty.Value.TryGetProperty("units", out var units))
                 {
                     continue;
                 }
 
-                foreach (var fact in unitProperty.Value.EnumerateArray())
+                foreach (var unitProperty in units.EnumerateObject())
                 {
-                    if (!fact.TryGetProperty("val", out var val) ||
-                        !val.TryGetDecimal(out var decimalValue) ||
-                        !fact.TryGetProperty("fy", out var fy) ||
-                        fy.ValueKind != JsonValueKind.Number ||
-                        !fy.TryGetInt32(out var fiscalYear))
+                    if (unitProperty.Value.ValueKind != JsonValueKind.Array)
                     {
                         continue;
                     }
 
-                    var fiscalPeriod = GetString(fact, "fp");
-                    var form = GetString(fact, "form");
-                    if (string.IsNullOrWhiteSpace(fiscalPeriod) || string.IsNullOrWhiteSpace(form))
+                    foreach (var fact in unitProperty.Value.EnumerateArray())
                     {
-                        continue;
-                    }
+                        if (!fact.TryGetProperty("val", out var val) ||
+                            !val.TryGetDecimal(out var decimalValue) ||
+                            !fact.TryGetProperty("fy", out var fy) ||
+                            fy.ValueKind != JsonValueKind.Number ||
+                            !fy.TryGetInt32(out var fiscalYear))
+                        {
+                            continue;
+                        }
 
-                    values.Add(new SecFactValue(
-                        "us-gaap",
-                        tagProperty.Name,
-                        unitProperty.Name,
-                        fiscalYear,
-                        fiscalPeriod,
-                        form,
-                        GetDate(fact, "filed"),
-                        GetDate(fact, "end"),
-                        decimalValue,
-                        sourceUrl,
-                        GetString(fact, "accn")));
+                        var fiscalPeriod = GetString(fact, "fp");
+                        var form = GetString(fact, "form");
+                        if (string.IsNullOrWhiteSpace(fiscalPeriod) || string.IsNullOrWhiteSpace(form))
+                        {
+                            continue;
+                        }
+
+                        values.Add(new SecFactValue(
+                            taxonomyProperty.Name,
+                            tagProperty.Name,
+                            unitProperty.Name,
+                            fiscalYear,
+                            fiscalPeriod,
+                            form,
+                            GetDate(fact, "filed"),
+                            GetDate(fact, "end"),
+                            decimalValue,
+                            sourceUrl,
+                            GetString(fact, "accn")));
+                    }
                 }
             }
         }

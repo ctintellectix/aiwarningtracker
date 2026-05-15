@@ -25,7 +25,7 @@ public class EarningsCallBizEndpointTests
             new MemoryCache(new MemoryCacheOptions()),
             Options.Create(new EarningsCallBizOptions { Enabled = true, RequestDelayMs = 0 }),
             NullLogger<EarningsCallBizTranscriptProvider>.Instance);
-        var controller = new TranscriptsController(new EmptyReadService(), new EmptyProviderChain(), provider, new RecordingStorageService(), new EmptyScoringService(), new EmptyAlertGenerationService());
+        var controller = new TranscriptsController(new EmptyProviderChain(), provider, new RecordingStorageService(), new EmptyScoringService(), new EmptyAlertGenerationService());
 
         var response = await controller.GetEarningsCallBizTranscript("NASDAQ", "hood", 2026, 1, CancellationToken.None);
 
@@ -39,7 +39,6 @@ public class EarningsCallBizEndpointTests
         Assert.Contains("/e/nasdaq/s/hood/y/2026/q/q1", ReadProperty<string>(value, "sourceUrl"));
         Assert.True(ReadProperty<int>(value, "confidenceScore") >= 80);
         Assert.Contains("AI infrastructure", ReadProperty<string>(value, "rawText"));
-        Assert.NotNull(ReadProperty<object>(value, "analysisSummary"));
     }
 
     private static T ReadProperty<T>(object value, string name) =>
@@ -108,7 +107,6 @@ public class EarningsCallBizEndpointTests
         public Task<IReadOnlyList<MetricDto>> GetCompanyMetricsAsync(string ticker, CancellationToken cancellationToken = default) => throw new NotImplementedException();
         public Task<CompanyFinancialsDto?> GetCompanyFinancialsAsync(string ticker, CancellationToken cancellationToken = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<CategoryStatusDto>> GetIndicatorTrendsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task<IReadOnlyList<TranscriptSignalDto>> GetTranscriptSignalsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<TranscriptSignalDto>>([]);
         public Task<IReadOnlyList<QuarterScoreDto>> GetRiskScoreHistoryAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<AlertDto>> GetAlertsAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
     }

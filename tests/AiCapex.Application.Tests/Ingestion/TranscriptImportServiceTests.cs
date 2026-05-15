@@ -28,6 +28,24 @@ public class TranscriptImportServiceTests
         Assert.Equal(2, result.SuccessCount);
     }
 
+    [Fact]
+    public async Task Reports_progress_before_each_company_is_imported()
+    {
+        var provider = new RecordingProvider([]);
+        var storage = new RecordingStorage();
+        var service = new TranscriptImportService(provider, storage, new FixedQuarterClock(2026, 1));
+        var progress = new List<(int CompletedCompanies, int TotalCompanies, string Ticker)>();
+
+        await service.ImportRecentQuartersAsync(
+            ["NVDA", "MSFT"],
+            onCompanyStarted: (completedCompanies, totalCompanies, ticker) =>
+                progress.Add((completedCompanies, totalCompanies, ticker)));
+
+        Assert.Equal(
+            [(0, 2, "NVDA"), (1, 2, "MSFT")],
+            progress);
+    }
+
     private static TranscriptResult Result(string ticker, int year, int quarter) =>
         new(ticker, year, quarter, null, "EarningsCallBiz", $"{ticker} Q{quarter} {year}", "Operator earnings conference call quarter question answer ".PadRight(2200, 'x'), $"https://example.com/{ticker}", 80);
 

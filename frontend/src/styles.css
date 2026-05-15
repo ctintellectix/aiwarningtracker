@@ -148,7 +148,7 @@ header p, .metric span, td, .signal p, .panel p {
 }
 
 .scoreBand {
-  grid-template-columns: 220px 190px 1fr 1fr;
+  grid-template-columns: 220px 220px;
 }
 
 .grid.two {
@@ -156,10 +156,6 @@ header p, .metric span, td, .signal p, .panel p {
 }
 
 .grid.three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.grid.categories {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -262,6 +258,12 @@ header p, .metric span, td, .signal p, .panel p {
   font-weight: 700;
 }
 
+.signal small {
+  display: block;
+  margin-top: 4px;
+  color: #667883;
+}
+
 .bullish, .good {
   color: #047857;
 }
@@ -271,6 +273,18 @@ header p, .metric span, td, .signal p, .panel p {
 }
 
 .neutral {
+  color: #4b5563;
+}
+
+.panel p.good {
+  color: #047857;
+}
+
+.panel p.bad {
+  color: #b91c1c;
+}
+
+.panel p.neutral {
   color: #4b5563;
 }
 
@@ -309,6 +323,18 @@ header p, .metric span, td, .signal p, .panel p {
   display: block;
   height: 100%;
   background: #d97706;
+}
+
+.bar.good span {
+  background: #047857;
+}
+
+.bar.bad span {
+  background: #b91c1c;
+}
+
+.bar.neutral span {
+  background: #6b7280;
 }
 
 .tableWrap {
@@ -392,6 +418,15 @@ th {
   align-items: center;
 }
 
+.jobProgress {
+  display: grid;
+  gap: 8px;
+}
+
+.jobProgress p {
+  margin-bottom: 0;
+}
+
 .miniChart div {
   display: flex;
   align-items: end;
@@ -458,7 +493,7 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .scoreBand, .grid.two, .grid.three, .grid.categories {
+  .scoreBand, .grid.two, .grid.three {
     grid-template-columns: 1fr;
   }
 }

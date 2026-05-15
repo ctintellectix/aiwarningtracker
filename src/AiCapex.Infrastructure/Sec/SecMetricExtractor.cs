@@ -16,10 +16,25 @@ public static class SecMetricExtractor
         {
             var sourceUrl = group.First().SourceUrl;
             var periodEndDate = group.Select(x => x.EndDate).Where(x => x.HasValue).Max();
-            var capex = FirstValue(group, "PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "CapitalExpendituresIncurredButNotYetPaid");
-            var ocf = FirstValue(group, "NetCashProvidedByUsedInOperatingActivities");
-            var revenue = FirstValue(group, "Revenues", "SalesRevenueNet");
-            var debt = FirstValue(group, "LongTermDebt", "LongTermDebtCurrent", "ShortTermBorrowings");
+            var capex = FirstValue(group,
+                "PaymentsToAcquirePropertyPlantAndEquipment",
+                "PaymentsToAcquireProductiveAssets",
+                "CapitalExpendituresIncurredButNotYetPaid",
+                "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities");
+            var ocf = FirstValue(group,
+                "NetCashProvidedByUsedInOperatingActivities",
+                "CashFlowsFromUsedInOperations");
+            var revenue = FirstValue(group,
+                "Revenues",
+                "SalesRevenueNet",
+                "Revenue");
+            var debt = FirstValue(group,
+                "LongTermDebt",
+                "LongTermDebtCurrent",
+                "ShortTermBorrowings",
+                "Borrowings",
+                "CurrentBorrowings",
+                "NoncurrentBorrowings");
 
             if (capex is not null)
             {
@@ -54,9 +69,13 @@ public static class SecMetricExtractor
 
     private static decimal? FirstValue(IEnumerable<SecFactValue> facts, params string[] tags) =>
         facts.Where(x => tags.Contains(x.Tag, StringComparer.OrdinalIgnoreCase))
-            .OrderByDescending(x => x.FiledDate)
+            .OrderBy(x => TaxonomyPriority(x.Taxonomy))
+            .ThenByDescending(x => x.FiledDate)
             .Select(x => (decimal?)x.Value)
             .FirstOrDefault();
+
+    private static int TaxonomyPriority(string taxonomy) =>
+        taxonomy.Equals("us-gaap", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
 
     private static bool TryQuarter(string fiscalPeriod, out int quarter) =>
         int.TryParse(fiscalPeriod.TrimStart('Q', 'q'), out quarter) && quarter is >= 1 and <= 4;

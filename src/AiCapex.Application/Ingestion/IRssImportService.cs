@@ -4,5 +4,8 @@ namespace AiCapex.Application.Ingestion;
 
 public interface IRssImportService
 {
-    Task<ImportResultDto> ImportAsync(CancellationToken cancellationToken = default);
+    Task<ImportResultDto> ImportAsync(
+        Action<int, int, string>? onFeedStarted = null,
+        Action<int, int, string, int, int>? onEntryStarted = null,
+        CancellationToken cancellationToken = default);
 }

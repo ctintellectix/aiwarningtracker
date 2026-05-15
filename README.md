@@ -40,32 +40,14 @@ SEC EDGAR ingestion uses the official companyfacts API. SEC requires a descripti
 $env:SEC_USER_AGENT="AiCapexSlowdownMonitor/1.0 (you@example.com)"
 ```
 
-Paid transcript providers are disabled by default because FMP and Finnhub transcript endpoints require paid/professional access:
+Optional OpenAI narrative analysis can replace keyword-only RSS/transcript scoring with structured document summaries and category signals:
 
 ```powershell
-$env:FMP_API_KEY="your-key"
-$env:FINNHUB_API_KEY="your-finnhub-key"
+$env:OPENAI_API_KEY="your-key"
+$env:OpenAI__Enabled="true"
 ```
 
-Never commit real API keys. Use user secrets, local development settings, or environment variables. To enable Finnhub for a local run, set the key and enable the feature flag:
-
-```powershell
-$env:FINNHUB_API_KEY="your-finnhub-key"
-$env:TranscriptProviders__EnableFinnhub="true"
-dotnet run --project src/AiCapex.Api/AiCapex.Api.csproj --launch-profile http
-```
-
-You can also set the flag in `src/AiCapex.Api/appsettings.Development.json`:
-
-```json
-{
-  "TranscriptProviders": {
-    "EnableFinnhub": true
-  }
-}
-```
-
-With Finnhub enabled, `GET /api/transcripts/{ticker}/{year}/{quarter}` checks cached transcripts first, then calls Finnhub. The app will still run without a Finnhub key; the provider returns no result and the fallback UX stays intact.
+When enabled, imported RSS articles and transcripts are analyzed once during ingestion and the structured results are stored with the source document for attribution. If the key is missing or the API call fails, the app falls back to the existing keyword analyzer so imports still complete.
 
 EarningsCallBiz public transcript lookup is enabled by default and uses cached, respectful requests:
 
@@ -156,7 +138,7 @@ The score is configured in `src/AiCapex.Api/appsettings.json`:
 - 10% AI revenue monetization signal
 - 10% financial stress / free cash flow signal
 
-Signals are normalized from `-100` bearish/risk-increasing to `+100` bullish/expansion-supportive, mapped to a 0-100 expansion scale, and weighted into the final score. `100` means strong expansion momentum; `0` means high slowdown or capex rollover risk.
+All signal impacts use one shared `-10` to `+10` momentum scale across OpenAI analysis, manual entries, derived signals, company pages, alerts, and dashboard rollups. The final expansion score converts those category signals into the separate `0` to `100` dashboard score without any hidden multiplier. `100` on the overall expansion score means the strongest expansion momentum; `0` means the weakest. The public-facing bands are intentionally plain-language: `0-19 very weak`, `20-39 weak`, `40-59 neutral`, `60-79 strong`, and `80-100 very strong`.
 
 ## Tracked And Real Data
 
@@ -171,21 +153,21 @@ To enable demo observations for local UI testing only, set:
 }
 ```
 
-SEC imports currently normalize likely capex, operating cash flow, revenue, and debt facts from EDGAR companyfacts JSON. Imported facts keep source URLs and source-document records, then feed the company financial charts.
+SEC imports currently normalize likely capex, operating cash flow, revenue, and debt facts from EDGAR companyfacts JSON across both `us-gaap` and `ifrs-full` taxonomies when those facts are present. Imported facts keep source URLs and source-document records, then feed the company financial charts.
 
-Transcript ingestion is provider-agnostic and direct-provider first. The default priority is cached/local transcripts, EarningsCallBiz public pages, then optional paid/direct providers such as Finnhub and FMP when their feature flags are enabled. Manual transcript upload, company IR URL discovery, and public web transcript discovery have been removed. The all-import workflow attempts transcript imports for the latest four quarters for every tracked ticker.
+Transcript ingestion uses cached/local transcripts first, then EarningsCallBiz public pages. Manual transcript upload, company IR URL discovery, public web transcript discovery, and the older paid transcript providers have been removed. The all-import workflow attempts transcript imports for the latest four quarters for every tracked ticker.
 
 EarningsCallBiz URLs use `https://earningscall.biz/e/{market}/s/{ticker}/y/{year}/q/q{quarter}`. The `market` segment must match the source site, with common values such as `nasdaq` and `nyse`. Imported transcripts store the source URL for attribution, use an app User-Agent, cache successful results for seven days, cache not-found results for twelve hours, and fall back to cached data when rate-limited. For commercial use, review earningscall.biz terms or use an official/licensed API.
 
-RSS/news imports read `NewsFeeds` from `src/AiCapex.Api/appsettings.json`, store deduped source documents by URL, and create keyword-derived indicator signals.
+RSS/news imports read `NewsFeeds` from `src/AiCapex.Api/appsettings.json`, store deduped source documents by URL, and send each new article through OpenAI narrative analysis to create indicator signals.
 
 Dashboard scoring is period-aware. SEC metrics preserve company-specific fiscal period end dates, and score calculations use the latest available company records up to the current calendar quarter end rather than letting one provider's future fiscal label define the whole dashboard. Transcript records keep their source fiscal label plus call/period date where available; provider labels should still be reviewed for edge cases because transcript sites may not always align perfectly to issuer fiscal calendars.
 
-Watchlist alerts are generated after imports, manual entries, transcript imports, explicit scoring runs, and app startup recalculation. The first rule set covers expansion score deterioration of 10+ points, capex/OCF above 75%, material increases in slowdown-warning transcript terms, and weakening HBM/DRAM, CoWoS/packaging, or data center/power signals. Alerts are deduped by title and message.
+Watchlist alerts are generated after imports, manual entries, transcript imports, explicit scoring runs, and app startup recalculation. The current rule set covers configurable expansion-score deterioration, configurable capex/OCF stress, and configurable weakening thresholds for HBM/DRAM, CoWoS/packaging, or data center/power signals. Alerts are deduped by title and message.
 
 ## Limitations And Disclaimer
 
-SEC XBRL tags vary by issuer and foreign issuers may not expose the same companyfacts data as U.S. filers. FMP and Finnhub transcript APIs can require paid access depending on plan and endpoint. RSS feeds can change formats or rate-limit requests, so imports are best treated as source-monitoring inputs rather than a complete news dataset.
+SEC XBRL tags vary by issuer and foreign issuers may not expose the same companyfacts data as U.S. filers. RSS feeds can change formats or rate-limit requests, so imports are best treated as source-monitoring inputs rather than a complete news dataset.
 
 ## TODOs For Real Data
 

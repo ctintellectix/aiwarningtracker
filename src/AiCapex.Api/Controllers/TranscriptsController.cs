@@ -11,17 +11,12 @@ namespace AiCapex.Api.Controllers;
 [ApiController]
 [Route("api/transcripts")]
 public sealed class TranscriptsController(
-    IAiCapexReadService readService,
     ITranscriptProviderChain providerChain,
     EarningsCallBizTranscriptProvider earningsCallBizProvider,
     ITranscriptStorageService transcriptStorage,
     IRiskScoringService scoringService,
     IAlertGenerationService alertGenerationService) : ControllerBase
 {
-    [HttpGet("signals")]
-    public async Task<IActionResult> GetSignals(CancellationToken cancellationToken) =>
-        Ok(await readService.GetTranscriptSignalsAsync(cancellationToken));
-
     [HttpGet("{ticker}/{year:int}/{quarter:int}")]
     public async Task<IActionResult> GetTranscript(string ticker, int year, int quarter, CancellationToken cancellationToken)
     {
@@ -44,8 +39,6 @@ public sealed class TranscriptsController(
         await scoringService.RecalculateAsync(cancellationToken);
         await alertGenerationService.GenerateAsync(cancellationToken);
 
-        var analyzer = new KeywordTranscriptAnalyzer();
-        var mentions = analyzer.Analyze(transcript.RawText);
         return Ok(new
         {
             ticker = transcript.Ticker,
@@ -56,21 +49,7 @@ public sealed class TranscriptsController(
             sourceUrl = transcript.SourceUrl,
             callDate = transcript.CallDate,
             confidenceScore = transcript.ConfidenceScore,
-            rawText = transcript.RawText,
-            analysisSummary = new
-            {
-                totalMentions = mentions.Sum(x => x.Count),
-                sentimentScore = analyzer.ScoreDirectionalSignal(transcript.RawText),
-                keywordGroups = mentions
-                    .GroupBy(x => x.Group)
-                    .Select(group => new
-                    {
-                        group = group.Key,
-                        count = group.Sum(x => x.Count)
-                    })
-                    .OrderByDescending(x => x.count)
-                    .ToList()
-            }
+            rawText = transcript.RawText
         });
     }
 }

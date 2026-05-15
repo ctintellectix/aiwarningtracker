@@ -54,6 +54,9 @@ public static class SchemaUpgrade
         await AddColumnIfMissing(db, "IndicatorSignals", "Confidence", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await AddColumnIfMissing(db, "IndicatorSignals", "SourceDocumentId", "INTEGER NULL", cancellationToken);
         await AddColumnIfMissing(db, "IndicatorSignals", "Explanation", "TEXT NULL", cancellationToken);
+        await AddColumnIfMissing(db, "SourceDocuments", "AnalysisProvider", "TEXT NULL", cancellationToken);
+        await AddColumnIfMissing(db, "SourceDocuments", "AnalysisModel", "TEXT NULL", cancellationToken);
+        await AddColumnIfMissing(db, "SourceDocuments", "AnalysisJson", "TEXT NULL", cancellationToken);
 
         await AddColumnIfMissing(db, "RiskScoreSnapshots", "SnapshotDate", "TEXT NULL", cancellationToken);
         await AddColumnIfMissing(db, "RiskScoreSnapshots", "OverallScore", "INTEGER NULL", cancellationToken);

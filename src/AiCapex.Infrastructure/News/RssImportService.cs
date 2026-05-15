@@ -1,5 +1,7 @@
 using AiCapex.Application.Dashboard;
 using AiCapex.Application.Ingestion;
+using AiCapex.Application.Analysis;
+using AiCapex.Application.Scoring;
 using AiCapex.Application.Transcripts;
 using AiCapex.Domain.Entities;
 using AiCapex.Domain.Scoring;
@@ -9,9 +11,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiCapex.Infrastructure.News;
 
-public sealed class RssImportService(AiCapexDbContext db, IRssFeedClient client, IReadOnlyList<RssFeedOptions> feeds) : IRssImportService
+public sealed class RssImportService(
+    AiCapexDbContext db,
+    IRssFeedClient client,
+    IReadOnlyList<RssFeedOptions> feeds,
+    IDocumentNarrativeAnalysisService narrativeAnalysis) : IRssImportService
 {
-    public async Task<ImportResultDto> ImportAsync(CancellationToken cancellationToken = default)
+    public async Task<ImportResultDto> ImportAsync(
+        Action<int, int, string>? onFeedStarted = null,
+        Action<int, int, string, int, int>? onEntryStarted = null,
+        CancellationToken cancellationToken = default)
     {
         await SchemaUpgrade.EnsureCompatibleSchemaAsync(db, cancellationToken);
         if (feeds.Count == 0)
@@ -23,12 +32,16 @@ public sealed class RssImportService(AiCapexDbContext db, IRssFeedClient client,
         var signalsImported = 0;
         var itemsFetched = 0;
         var documentsSkipped = 0;
-        foreach (var feed in feeds)
+        for (var feedIndex = 0; feedIndex < feeds.Count; feedIndex++)
         {
+            var feed = feeds[feedIndex];
+            onFeedStarted?.Invoke(feedIndex, feeds.Count, feed.Name);
             var entries = await client.FetchAsync(feed, cancellationToken);
             itemsFetched += entries.Count;
-            foreach (var entry in entries)
+            for (var entryIndex = 0; entryIndex < entries.Count; entryIndex++)
             {
+                var entry = entries[entryIndex];
+                onEntryStarted?.Invoke(feedIndex, feeds.Count, feed.Name, entryIndex, entries.Count);
                 var summary = TextSanitizer.ToPlainText(entry.Summary);
                 var exists = await db.SourceDocuments.AnyAsync(x => x.Url == entry.Url, cancellationToken);
                 if (exists)
@@ -56,31 +69,41 @@ public sealed class RssImportService(AiCapexDbContext db, IRssFeedClient client,
                 documentsImported++;
 
                 var text = $"{entry.Title}\n{summary}";
-                var analyzer = new KeywordTranscriptAnalyzer();
-                var mentions = analyzer.Analyze(text);
-                if (mentions.Count == 0)
+                var analysis = await narrativeAnalysis.AnalyzeAsync(
+                    new DocumentNarrativeAnalysisRequest("RSS", entry.Title, text),
+                    cancellationToken);
+                document.Summary = analysis.Summary;
+                document.AnalysisProvider = analysis.Provider;
+                document.AnalysisModel = analysis.Model;
+                document.AnalysisJson = analysis.RawJson;
+                if (analysis.Signals.Count == 0)
                 {
                     continue;
                 }
 
-                var score = analyzer.ScoreDirectionalSignal(text);
-                var signal = new IndicatorSignal
+                foreach (var analysisSignal in analysis.Signals)
                 {
-                    SignalDate = publishedDate,
-                    FiscalQuarterId = await EnsureFiscalQuarterIdAsync(publishedDate, cancellationToken),
-                    Category = PickCategory(mentions),
-                    Name = entry.Title,
-                    SignalName = "RSS keyword signal",
-                    Direction = score > 5 ? SignalDirection.Bullish : score < -5 ? SignalDirection.Bearish : SignalDirection.Neutral,
-                    ScoreImpact = score,
-                    Strength = Math.Min(100, mentions.Sum(x => x.Count) * 15),
-                    Confidence = Math.Clamp((int)(feed.CredibilityWeight * 100), 0, 100),
-                    SourceDocumentId = document.Id,
-                    Summary = summary,
-                    Explanation = $"Keyword groups: {string.Join(", ", mentions.Select(x => x.Group).Distinct())}"
-                };
-                db.IndicatorSignals.Add(signal);
-                signalsImported++;
+                    var score = analysisSignal.ScoreImpact;
+                    var signalName = "RSS AI narrative signal";
+                    var interpretedScore = SignalScoreInterpreter.ToScoringSignal(score, signalName);
+                    var displayScore = SignalScoreInterpreter.ToDisplaySignal(interpretedScore);
+                    db.IndicatorSignals.Add(new IndicatorSignal
+                    {
+                        SignalDate = publishedDate,
+                        FiscalQuarterId = await EnsureFiscalQuarterIdAsync(publishedDate, cancellationToken),
+                        Category = analysisSignal.Category,
+                        Name = entry.Title,
+                        SignalName = signalName,
+                        Direction = displayScore > 1 ? SignalDirection.Bullish : displayScore < -1 ? SignalDirection.Bearish : SignalDirection.Neutral,
+                        ScoreImpact = score,
+                        Strength = Math.Min(100, Math.Abs((int)Math.Round(score))),
+                        Confidence = Math.Min(analysisSignal.Confidence, Math.Clamp((int)(feed.CredibilityWeight * 100), 0, 100)),
+                        SourceDocumentId = document.Id,
+                        Summary = analysisSignal.Summary,
+                        Explanation = analysisSignal.Explanation
+                    });
+                    signalsImported++;
+                }
             }
         }
 
@@ -105,29 +128,4 @@ public sealed class RssImportService(AiCapexDbContext db, IRssFeedClient client,
         return quarter.Id;
     }
 
-    private static RiskScoreCategory PickCategory(IReadOnlyList<TranscriptMentionResult> mentions)
-    {
-        var groups = mentions.Select(x => x.Group).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (groups.Contains("Memory/HBM"))
-        {
-            return RiskScoreCategory.HbmDramPricingAllocation;
-        }
-
-        if (groups.Contains("Packaging"))
-        {
-            return RiskScoreCategory.CowosAdvancedPackaging;
-        }
-
-        if (groups.Contains("Power"))
-        {
-            return RiskScoreCategory.DataCenterPower;
-        }
-
-        if (groups.Contains("Capex"))
-        {
-            return RiskScoreCategory.HyperscalerCapexRevisionTrend;
-        }
-
-        return RiskScoreCategory.AiRevenueMonetization;
-    }
 }

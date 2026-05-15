@@ -10,6 +10,34 @@ namespace AiCapex.Application.Tests.RiskScoring;
 public class RiskScoringServiceTests
 {
     [Fact]
+    public async Task Recalculate_uses_configured_weights()
+    {
+        await using var db = await CreateDbAsync();
+        var quarter = await AddQuarterAsync(db, 2026, 1);
+        db.IndicatorSignals.AddRange(
+            new IndicatorSignal
+            {
+                FiscalQuarterId = quarter.Id,
+                Category = RiskScoreCategory.HyperscalerCapexRevisionTrend,
+                ScoreImpact = 10,
+                Confidence = 100
+            },
+            new IndicatorSignal
+            {
+                FiscalQuarterId = quarter.Id,
+                Category = RiskScoreCategory.HbmDramPricingAllocation,
+                ScoreImpact = -10,
+                Confidence = 100
+            });
+        await db.SaveChangesAsync();
+        var weights = new RiskScoreWeights(100, 0, 0, 0, 0, 0);
+
+        var result = await new RiskScoringService(db, weights).RecalculateAsync();
+
+        Assert.Equal(100, result.CurrentRiskScore);
+    }
+
+    [Fact]
     public async Task Recalculate_updates_latest_quarter_snapshot_from_indicator_signals()
     {
         await using var db = await CreateDbAsync();
@@ -27,7 +55,7 @@ public class RiskScoringServiceTests
         });
         db.RiskScoreSnapshots.Add(new RiskScoreSnapshot { FiscalQuarterId = quarter.Id, Score = 50, Band = "Watch zone", CreatedAt = DateTimeOffset.UtcNow.AddDays(-1) });
         await db.SaveChangesAsync();
-        var service = new RiskScoringService(db);
+        var service = new RiskScoringService(db, RiskScoreWeights.Default);
 
         var result = await service.RecalculateAsync();
 
@@ -56,7 +84,7 @@ public class RiskScoringServiceTests
             Unit = "%"
         });
         await db.SaveChangesAsync();
-        var service = new RiskScoringService(db);
+        var service = new RiskScoringService(db, RiskScoreWeights.Default);
 
         var result = await service.RecalculateAsync();
 
@@ -100,7 +128,7 @@ public class RiskScoringServiceTests
                 Unit = "%"
             });
         await db.SaveChangesAsync();
-        var service = new RiskScoringService(db);
+        var service = new RiskScoringService(db, RiskScoreWeights.Default);
 
         var result = await service.RecalculateAsync(new DateOnly(2026, 6, 15));
 
@@ -111,21 +139,29 @@ public class RiskScoringServiceTests
     }
 
     [Fact]
-    public async Task Recalculate_backfills_recent_history_so_initial_delta_uses_previous_real_quarter()
+    public async Task Recalculate_backfills_last_eight_quarters_so_initial_history_and_delta_use_real_quarters()
     {
         await using var db = await CreateDbAsync();
-        var q1 = await AddQuarterAsync(db, 2026, 1);
-        var q2 = await AddQuarterAsync(db, 2026, 2);
-        var q3 = await AddQuarterAsync(db, 2026, 3);
+        var quarters = new List<FiscalQuarter>();
+        for (var year = 2024; year <= 2026; year++)
+        {
+            for (var quarter = 1; quarter <= 4; quarter++)
+            {
+                if (year == 2026 && quarter > 3)
+                {
+                    break;
+                }
+
+                quarters.Add(await AddQuarterAsync(db, year, quarter));
+            }
+        }
+
         var company = new Company { Ticker = "MSFT", Name = "Microsoft", Segment = "Hyperscaler", IsHyperscaler = true };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
-        db.FinancialMetrics.AddRange(
-            CapexGrowth(company, q1, 10),
-            CapexGrowth(company, q2, 30),
-            CapexGrowth(company, q3, -40));
+        db.FinancialMetrics.AddRange(quarters.Select((quarter, index) => CapexGrowth(company, quarter, index * 5)));
         await db.SaveChangesAsync();
-        var service = new RiskScoringService(db);
+        var service = new RiskScoringService(db, RiskScoreWeights.Default);
 
         await service.RecalculateAsync(new DateOnly(2026, 9, 15));
 
@@ -134,9 +170,10 @@ public class RiskScoringServiceTests
             .OrderBy(x => x.FiscalQuarter!.Year)
             .ThenBy(x => x.FiscalQuarter!.Quarter)
             .ToListAsync();
-        Assert.Equal([q1.Id, q2.Id, q3.Id], snapshots.Select(x => x.FiscalQuarterId).ToArray());
-        Assert.Equal(snapshots[2].Score - snapshots[1].Score, snapshots[2].ChangeFromPreviousQuarter);
-        Assert.NotEqual(snapshots[2].Score - 50, snapshots[2].ChangeFromPreviousQuarter);
+        var expectedQuarters = quarters.TakeLast(8).Select(x => x.Id).ToArray();
+        Assert.Equal(expectedQuarters, snapshots.Select(x => x.FiscalQuarterId).ToArray());
+        Assert.Equal(snapshots[^1].Score - snapshots[^2].Score, snapshots[^1].ChangeFromPreviousQuarter);
+        Assert.NotEqual(snapshots[^1].Score - 50, snapshots[^1].ChangeFromPreviousQuarter);
     }
 
     private static async Task<AiCapexDbContext> CreateDbAsync()

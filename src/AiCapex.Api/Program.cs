@@ -2,6 +2,7 @@ using AiCapex.Application.Alerts;
 using AiCapex.Application.Scoring;
 using AiCapex.Infrastructure;
 using AiCapex.Infrastructure.Persistence;
+using AiCapex.Api.Services;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,6 +12,7 @@ builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 builder.Services.AddOpenApi();
+builder.Services.AddSingleton<IImportJobService, ImportJobService>();
 builder.Services.AddInfrastructure(builder.Configuration);
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? ["http://localhost:5173", "http://localhost:4173"];

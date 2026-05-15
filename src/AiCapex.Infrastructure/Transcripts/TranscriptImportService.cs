@@ -25,17 +25,24 @@ public sealed class TranscriptImportService(
 {
     public async Task<ImportResultDto> ImportAsync(string ticker, CancellationToken cancellationToken = default)
     {
-        var summary = await ImportRecentQuartersAsync([ticker], 4, cancellationToken);
+        var summary = await ImportRecentQuartersAsync([ticker], 4, cancellationToken: cancellationToken);
         return new ImportResultDto(summary.Source, true, summary.DocumentsImported, summary.SignalsImported, $"Imported {summary.DocumentsImported} transcript documents for {ticker.ToUpperInvariant()}.");
     }
 
-    public async Task<BulkImportResultDto> ImportRecentQuartersAsync(IReadOnlyList<string> tickers, int quarterCount = 4, CancellationToken cancellationToken = default)
+    public async Task<BulkImportResultDto> ImportRecentQuartersAsync(
+        IReadOnlyList<string> tickers,
+        int quarterCount = 4,
+        Action<int, int, string>? onCompanyStarted = null,
+        CancellationToken cancellationToken = default)
     {
         var quarters = LastQuarters(quarterCount);
         var results = new List<BulkImportItemDto>();
+        var normalizedTickers = tickers.Select(x => x.ToUpperInvariant()).ToList();
 
-        foreach (var ticker in tickers.Select(x => x.ToUpperInvariant()))
+        for (var index = 0; index < normalizedTickers.Count; index++)
         {
+            var ticker = normalizedTickers[index];
+            onCompanyStarted?.Invoke(index, normalizedTickers.Count, ticker);
             var documents = 0;
             var signals = 0;
             var attempts = 0;

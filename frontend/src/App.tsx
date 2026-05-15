@@ -1,11 +1,9 @@
-import { AlertTriangle, BarChart3, Building2, ChevronDown, ChevronRight, FileText, Gauge, HelpCircle, PlusCircle, RadioTower } from "lucide-react";
+import { AlertTriangle, Building2, ChevronDown, ChevronRight, Gauge, HelpCircle, PlusCircle, RadioTower } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { Alert, api, CategoryStatus, CompanyDetail, DashboardSummary, DataSourceStatus, ManualEntry, QuarterScore, TranscriptSignal } from "./api";
+import { Alert, api, CategoryStatus, CompanyDetail, DashboardSummary, DataSourceStatus, ImportJob, ManualEntry, QuarterScore } from "./api";
 
 const nav = [
   ["/", "Dashboard", Gauge],
-  ["/indicators", "Indicators", BarChart3],
-  ["/transcripts", "Transcripts", FileText],
   ["/risk-history", "History", RadioTower],
   ["/alerts", "Alerts", AlertTriangle],
   ["/data-sources", "Data Sources", Building2],
@@ -52,8 +50,6 @@ export function App() {
       <main>
         {path === "/" && <Dashboard go={go} refreshKey={refreshKey} />}
         {path.startsWith("/companies/") && <CompanyPage ticker={path.split("/").pop() ?? "MSFT"} refreshKey={refreshKey} />}
-        {path === "/indicators" && <IndicatorsPage refreshKey={refreshKey} />}
-        {path === "/transcripts" && <TranscriptsPage refreshKey={refreshKey} />}
         {path === "/risk-history" && <HistoryPage refreshKey={refreshKey} />}
         {path === "/alerts" && <AlertsPage refreshKey={refreshKey} />}
         {path === "/data-sources" && <DataSourcesPage onDataRefresh={refreshStats} refreshKey={refreshKey} />}
@@ -72,6 +68,29 @@ function Dashboard({ go, refreshKey }: { go: (path: string) => void; refreshKey:
   return (
     <>
       <Header title="Overall AI CapEx Momentum Dashboard" subtitle="Real public-signal monitor for AI infrastructure capex momentum." />
+      <section className="scoreBand">
+        <div className="scoreDial">
+          <div className="labelWithTooltip">
+            <span className="scoreValue">{data.currentRiskScore}</span>
+            <TooltipIcon text={tooltips.riskScore} />
+          </div>
+          <small>{data.riskBand}</small>
+        </div>
+        <MetricCard label="Momentum change vs previous quarter" value={`${signed(data.changeVsPreviousQuarter)} pts`} tooltip={tooltips.riskScoreChange} />
+      </section>
+      <section className="grid two">
+        {data.categoryStatuses.map((item) => (
+          <article className="panel" key={item.category}>
+            <h2>{labelCategory(item.category)}</h2>
+            <div className={`bar ${signalToneClass(item.averageSignal)}`} title={tooltips.categorySignal}><span style={{ width: `${Math.min(100, Math.abs(item.averageSignal) * 10)}%` }} /></div>
+            <p className={`labelWithTooltip ${signalToneClass(item.averageSignal)}`}>
+              <strong>{item.status}</strong> ({item.averageSignal}) <TooltipIcon text={tooltips.categorySignal} />
+            </p>
+            <p>{item.summary}</p>
+          </article>
+        ))}
+      </section>
+      <SignalList title="Top company drivers" signals={data.topCompanyDrivers} />
       <section className="panel">
         <div className="panelHead">
           <h2>Tracked companies</h2>
@@ -86,34 +105,6 @@ function Dashboard({ go, refreshKey }: { go: (path: string) => void; refreshKey:
           ))}
         </div>
       </section>
-      <section className="scoreBand">
-        <div className="scoreDial">
-          <div className="labelWithTooltip">
-            <span className="scoreValue">{data.currentRiskScore}</span>
-            <TooltipIcon text={tooltips.riskScore} />
-          </div>
-          <small>{data.riskBand}</small>
-        </div>
-        <MetricCard label="Momentum change vs previous quarter" value={`${signed(data.changeVsPreviousQuarter)} pts`} tooltip={tooltips.riskScoreChange} />
-        <MetricCard label="Bullish signal summary" value={data.bullishSummary} text />
-        <MetricCard label="Bearish signal summary" value={data.bearishSummary} text />
-      </section>
-      <section className="grid two">
-        <SignalList title="Top positive indicators" signals={data.topPositiveIndicators} />
-        <SignalList title="Top negative indicators" signals={data.topNegativeIndicators} />
-      </section>
-      <section className="grid categories">
-        {data.categoryStatuses.map((item) => (
-          <article className="panel" key={item.category}>
-            <h3>{labelCategory(item.category)}</h3>
-            <div className="labelWithTooltip">
-              <strong className={item.averageSignal < -20 ? "bad" : item.averageSignal > 10 ? "good" : ""}>{item.status}</strong>
-              <TooltipIcon text={tooltips.categorySignal} />
-            </div>
-            <p>{item.summary}</p>
-          </article>
-        ))}
-      </section>
     </>
   );
 }
@@ -122,12 +113,12 @@ function CompanyPage({ ticker, refreshKey }: { ticker: string; refreshKey: numbe
   const detail = useApi(() => api.company(ticker), [ticker, refreshKey]);
   const financials = useApi(() => api.companyFinancials(ticker), [ticker, refreshKey]);
   if (!detail.data) return <Loading error={detail.error} />;
-  const { company, metrics, signals, sources } = detail.data;
+  const { company, metrics, signals, currentSignals, historicalSignals, sources } = detail.data;
   return (
     <>
       <Header title={`${company.ticker} - ${company.name}`} subtitle={company.segment} />
       <section className="grid three">
-        <MetricCard label="Latest risk signal" value={company.latestRiskSignal.toFixed(1)} tooltip={tooltips.companyRiskSignal} />
+        <MetricCard label="Latest momentum signal" value={company.latestMomentumSignal.toFixed(1)} tooltip={tooltips.companyRiskSignal} />
         <MetricCard label="Signal count" value={signals.length.toString()} tooltip={tooltips.signalCount} />
         <MetricCard label="Source docs" value={sources.length.toString()} tooltip={tooltips.sourceDocs} />
       </section>
@@ -140,39 +131,9 @@ function CompanyPage({ ticker, refreshKey }: { ticker: string; refreshKey: numbe
           <MiniMetricChart title="Debt Trend" metrics={financials.data.debt} />
         </section>
       )}
-      <SignalList title="Company signals" signals={signals} />
+      <SignalList title="Current category signals" signals={currentSignals} />
+      <CollapsibleSignalList title="Historical category signals" signals={historicalSignals} />
       <DataTable title="Sources" rows={sources.map((s) => [s.sourceType, s.title, s.summary])} headers={["Type", "Title", "Summary"]} />
-    </>
-  );
-}
-
-function IndicatorsPage({ refreshKey }: { refreshKey: number }) {
-  const indicators = useApi(api.indicators, [refreshKey]);
-  if (!indicators.data) return <Loading error={indicators.error} />;
-  return (
-    <>
-      <Header title="Indicator Trend Page" subtitle="Weighted categories behind the current AI capex expansion score." />
-      <div className="grid two">
-        {indicators.data.map((item: CategoryStatus) => (
-          <article className="panel" key={item.category}>
-            <h2>{labelCategory(item.category)}</h2>
-            <div className="bar" title={tooltips.categorySignal}><span style={{ width: `${Math.min(100, Math.abs(item.averageSignal))}%` }} /></div>
-            <p className="labelWithTooltip"><strong>{item.status}</strong> ({item.averageSignal}) <TooltipIcon text={tooltips.categorySignal} /></p>
-            <p>{item.summary}</p>
-          </article>
-        ))}
-      </div>
-    </>
-  );
-}
-
-function TranscriptsPage({ refreshKey }: { refreshKey: number }) {
-  const transcripts = useApi(api.transcripts, [refreshKey]);
-  if (!transcripts.data) return <Loading error={transcripts.error} />;
-  return (
-    <>
-      <Header title="Transcript Signal Explorer" subtitle="Keyword-based mentions from imported transcript text." />
-      <DataTable title="Transcript mentions" rows={transcripts.data.map((t: TranscriptSignal) => [t.ticker, t.quarter, t.keywordGroup, t.count.toString(), t.title])} headers={["Ticker", "Quarter", "Group", "Count", "Transcript"]} headerTooltips={{ Count: tooltips.transcriptMentionCount }} />
     </>
   );
 }
@@ -192,7 +153,7 @@ function HistoryPage({ refreshKey }: { refreshKey: number }) {
           </div>
         ))}
       </section>
-      <DataTable title="History" rows={history.data.map((h) => [h.quarter, h.score.toString(), signed(h.change), h.band])} headers={["Quarter", "Score", "Change", "Band"]} headerTooltips={{ Score: tooltips.riskScore, Change: tooltips.riskScoreChange, Band: tooltips.riskBand }} />
+      <DataTable title="History" rows={history.data.map((h) => [h.quarter, h.score.toString(), h.change == null ? "-" : signed(h.change), h.band])} headers={["Quarter", "Score", "Change", "Band"]} headerTooltips={{ Score: tooltips.riskScore, Change: tooltips.riskScoreChange, Band: tooltips.riskBand }} />
     </>
   );
 }
@@ -227,34 +188,53 @@ function DataSourcesPage({ onDataRefresh, refreshKey }: { onDataRefresh: () => v
   const companies = useApi(api.companies, [refreshKey]);
   const [ticker, setTicker] = useState("MSFT");
   const [result, setResult] = useState("");
+  const [job, setJob] = useState<ImportJob | null>(null);
+
+  useEffect(() => {
+    if (!job || job.status === "Completed" || job.status === "Failed") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api.importJob(job.id);
+        setJob(next);
+        if (next.status === "Completed") {
+          setResult(formatJobResult(next));
+          onDataRefresh();
+        }
+        if (next.status === "Failed") {
+          setResult(`Import failed: ${next.message}`);
+        }
+      } catch (error) {
+        setResult(error instanceof Error ? error.message : "Could not refresh import status.");
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [job, onDataRefresh]);
+
   if (!statuses.data || !companies.data) return <Loading error={statuses.error ?? companies.error} />;
 
   const runSecImport = async () => {
-    setResult("Importing SEC companyfacts...");
-    const response = await api.importSec(ticker);
-    setResult(`${response.ticker}: ${response.message} ${response.factsImported} facts, ${response.metricsImported} metrics.`);
-    onDataRefresh();
+    setResult("Starting SEC companyfacts import...");
+    setJob(await api.startSecImportJob(ticker));
   };
 
   const runRssImport = async () => {
-    setResult("Importing RSS/news feeds...");
-    const response = await api.importRss();
-    setResult(`${response.source}: ${response.message} ${response.signalsImported} signals.`);
-    onDataRefresh();
+    setResult("Starting RSS/news import...");
+    setJob(await api.startRssImportJob());
   };
 
   const runSecAll = async () => {
-    setResult("Importing SEC companyfacts for all tracked companies...");
-    const response = await api.importSecAll();
-    setResult(`${response.source}: processed ${response.companiesProcessed}, ${response.successCount} succeeded, ${response.failureCount} failed, ${response.documentsImported} facts, ${response.signalsImported} metrics.`);
-    onDataRefresh();
+    setResult("Starting SEC companyfacts import for all tracked companies...");
+    setJob(await api.startSecAllImportJob());
+  };
+
+  const runTranscriptImport = async () => {
+    setResult("Starting transcript import...");
+    setJob(await api.startTranscriptImportJob());
   };
 
   const runAllImports = async () => {
-    setResult("Running SEC, transcript, and RSS imports for all tracked companies...");
-    const response = await api.importAll();
-    setResult(`All imports finished. SEC: ${response.sec.successCount}/${response.sec.companiesProcessed} succeeded. Transcripts: ${response.transcripts.documentsImported} documents. RSS: ${response.rss.message}`);
-    onDataRefresh();
+    setResult("Starting full import run...");
+    setJob(await api.startAllImportJob());
   };
 
   return (
@@ -277,8 +257,15 @@ function DataSourcesPage({ onDataRefresh, refreshKey }: { onDataRefresh: () => v
           <button className="primary" type="button" onClick={runSecImport}>Run SEC import</button>
           <button type="button" onClick={runSecAll}>Run SEC for all tracked</button>
           <button type="button" onClick={runRssImport}>Run RSS import</button>
+          <button type="button" onClick={runTranscriptImport}>Run transcript import</button>
           <button type="button" onClick={runAllImports}>Run all imports</button>
         </div>
+        {job && job.status !== "Completed" && job.status !== "Failed" && (
+          <div className="jobProgress">
+            <div className="bar"><span style={{ width: `${job.progressPercent}%` }} /></div>
+            <p>{job.kind}: {job.message} {job.progressPercent}%</p>
+          </div>
+        )}
         {result && <p>{result}</p>}
       </section>
     </>
@@ -309,7 +296,7 @@ function ManualEntryPage({ onDataRefresh }: { onDataRefresh: () => void }) {
       <form className="panel form" onSubmit={submit}>
         <label>Ticker<input name="ticker" defaultValue="MSFT" required /></label>
         <label>Category<select name="category" defaultValue="HyperscalerCapexRevisionTrend">{categoryOptions.map((x) => <option key={x} value={x}>{labelCategory(x)}</option>)}</select></label>
-        <label><span className="labelWithTooltip">Score impact<TooltipIcon text={tooltips.signalImpact} /></span><input name="scoreImpact" type="number" min="-100" max="100" defaultValue="-20" required /></label>
+        <label><span className="labelWithTooltip">Score impact<TooltipIcon text={tooltips.signalImpact} /></span><input name="scoreImpact" type="number" min="-10" max="10" defaultValue="-2" required /></label>
         <label>Source title<input name="sourceTitle" defaultValue="Manual analyst note" required /></label>
         <label>Summary<textarea name="summary" defaultValue="Capex commentary moved from raise to hold." required /></label>
         <button className="primary">Save signal</button>
@@ -332,9 +319,41 @@ function SignalList({ title, signals }: { title: string; signals: DashboardSumma
     <section className="panel">
       <h2 className="labelWithTooltip">{title}<TooltipIcon text={tooltips.signalImpact} /></h2>
       {signals.length === 0 ? (
-        <p className="emptyState">No directional indicators yet. Run imports or add manual signals with non-zero score impact.</p>
+        <p className="emptyState">No directional score drivers yet. Run imports or add manual signals with non-zero score impact.</p>
       ) : (
-        <div className="stack">{signals.map((s) => <article className="signal" key={`${s.name}-${s.ticker}`}><strong>{s.name}</strong><span className={s.direction.toLowerCase()} title={tooltips.signalImpact}>{s.direction} {signed(s.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} /></span><p>{s.summary}</p></article>)}</div>
+        <div className="stack">
+          {signals.map((s) => (
+            <article className="signal" key={`${s.name}-${s.ticker}`}>
+              <strong>{s.ticker ? `${s.ticker} - ${s.name}` : s.name}</strong>
+              {s.ticker && <small>{labelCategory(s.category)}</small>}
+              <span className={s.direction.toLowerCase()} title={tooltips.signalImpact}>{s.direction} {signed(s.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} /></span>
+              <p>{s.summary}</p>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CollapsibleSignalList({ title, signals }: { title: string; signals: DashboardSummary["topPositiveIndicators"] }) {
+  const [open, setOpen] = useState(false);
+  const ToggleIcon = open ? ChevronDown : ChevronRight;
+  return (
+    <section className="panel">
+      <div className="collapsibleHead">
+        <h2 className="labelWithTooltip">{title}<TooltipIcon text={tooltips.signalImpact} /></h2>
+        <button type="button" className="iconButton" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${title}`} title={`${open ? "Collapse" : "Expand"} ${title}`}>
+          <ToggleIcon size={18} />
+        </button>
+      </div>
+      {!open && <p className="emptyState">{signals.length} older signals hidden.</p>}
+      {open && (
+        signals.length === 0 ? (
+          <p className="emptyState">No historical signals yet.</p>
+        ) : (
+          <div className="stack">{signals.map((s) => <article className="signal" key={`${s.name}-${s.ticker}-${s.quarter}`}><strong>{s.name}</strong><span className={s.direction.toLowerCase()} title={tooltips.signalImpact}>{s.direction} {signed(s.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} /></span><p>{s.summary}</p></article>)}</div>
+        )
       )}
     </section>
   );
@@ -401,14 +420,13 @@ const categoryOptions = ["HyperscalerCapexRevisionTrend", "HbmDramPricingAllocat
 const tooltips = {
   riskScore: "0-100 AI CapEx expansion score. Higher means stronger expansion; lower means slowdown or capex rollover risk.",
   riskScoreChange: "Point change versus the previous fiscal quarter's expansion score. Positive means momentum improved; negative means momentum weakened.",
-  riskBand: "Plain-English bucket for the 0-100 expansion score: rollover risk, slowdown forming, watch zone, healthy expansion, or bullish acceleration.",
-  signalImpact: "Signal impact uses a -100 to +100 scale. Positive values are bullish for AI capex momentum; negative values are bearish or risk-increasing.",
-  categorySignal: "Average signal impact for this category. Above +15 is constructive, below -25 is weakening, and values near zero are mixed.",
-  companyRiskSignal: "Average score impact of this company's indicator signals. Positive is bullish; negative is bearish/risk-increasing.",
+  riskBand: "Plain-English bucket for the 0-100 expansion score: very weak, weak, neutral, strong, or very strong.",
+  signalImpact: "Signal impact uses a trader-facing -10 to +10 momentum scale. Positive values support AI capex momentum; negative values weaken it.",
+  categorySignal: "Average category momentum on a -10 to +10 scale. Bearish is below -1, bullish is above +1, and values near zero are neutral.",
+  companyRiskSignal: "Current company momentum signal on a -10 to +10 scale, using the latest evidence by category. Positive is bullish; negative is bearish.",
   signalCount: "Number of indicator signals currently stored for this company.",
   sourceDocs: "Number of source documents tied to this company, including SEC imports, RSS/news items, transcripts, and manual entries.",
   financialMetricValue: "Financial metric value imported for that fiscal quarter. Units vary by metric and source.",
-  transcriptMentionCount: "Number of keyword hits found for this keyword group in the transcript text.",
   confidenceScore: "0-100 estimate of source/candidate quality. Higher means the app has more confidence the item is relevant and usable."
 };
 
@@ -429,12 +447,32 @@ function signed(value: number) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
+function signalToneClass(score: number) {
+  if (score < -1) return "bad";
+  if (score > 1) return "good";
+  return "neutral";
+}
+
 function scoreClass(score: number) {
-  if (score <= 24) return "scoreRollover";
+  if (score <= 19) return "scoreRollover";
   if (score <= 39) return "scoreSlowdown";
-  if (score <= 54) return "scoreWatch";
-  if (score <= 74) return "scoreHealthy";
+  if (score <= 59) return "scoreWatch";
+  if (score <= 79) return "scoreHealthy";
   return "scoreBullish";
+}
+
+function formatJobResult(job: ImportJob) {
+  if (!job.result) return `${job.kind} completed.`;
+  if ("sec" in job.result) {
+    return `All imports finished. SEC: ${job.result.sec.successCount}/${job.result.sec.companiesProcessed} succeeded. Transcripts: ${job.result.transcripts.documentsImported} documents. RSS: ${job.result.rss.message}`;
+  }
+  if ("companiesProcessed" in job.result) {
+    return `${job.result.source}: processed ${job.result.companiesProcessed}, ${job.result.successCount} succeeded, ${job.result.failureCount} failed, ${job.result.documentsImported} documents, ${job.result.signalsImported} signals.`;
+  }
+  if ("ticker" in job.result) {
+    return `${job.result.ticker}: ${job.result.message} ${job.result.factsImported} facts, ${job.result.metricsImported} metrics.`;
+  }
+  return `${job.result.source}: ${job.result.message} ${job.result.signalsImported} signals.`;
 }
 
 function normalizeBase(base: string) {

@@ -123,9 +123,9 @@ public static class SeedData
         db.AddRange(metrics);
 
         db.AddRange(
-            new RiskScoreSnapshot { FiscalQuarterId = quarters[0].Id, Score = 39, ChangeFromPreviousQuarter = -3, Band = "Healthy expansion", CreatedAt = DateTimeOffset.UtcNow.AddMonths(-6) },
-            new RiskScoreSnapshot { FiscalQuarterId = previous.Id, Score = 47, ChangeFromPreviousQuarter = 8, Band = "Watch zone", CreatedAt = DateTimeOffset.UtcNow.AddMonths(-3) },
-            new RiskScoreSnapshot { FiscalQuarterId = latest.Id, Score = 58, ChangeFromPreviousQuarter = 11, Band = "Watch zone", CreatedAt = DateTimeOffset.UtcNow }
+            new RiskScoreSnapshot { FiscalQuarterId = quarters[0].Id, Score = 39, ChangeFromPreviousQuarter = -3, Band = "Weak", CreatedAt = DateTimeOffset.UtcNow.AddMonths(-6) },
+            new RiskScoreSnapshot { FiscalQuarterId = previous.Id, Score = 47, ChangeFromPreviousQuarter = 8, Band = "Neutral", CreatedAt = DateTimeOffset.UtcNow.AddMonths(-3) },
+            new RiskScoreSnapshot { FiscalQuarterId = latest.Id, Score = 58, ChangeFromPreviousQuarter = 11, Band = "Neutral", CreatedAt = DateTimeOffset.UtcNow }
         );
 
         var signals = new[]

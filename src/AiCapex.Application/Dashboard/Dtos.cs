@@ -11,15 +11,18 @@ public sealed record DashboardSummaryDto(
     string BearishSummary,
     IReadOnlyList<SignalDto> TopPositiveIndicators,
     IReadOnlyList<SignalDto> TopNegativeIndicators,
+    IReadOnlyList<SignalDto> TopCompanyDrivers,
     IReadOnlyList<CategoryStatusDto> CategoryStatuses,
     IReadOnlyList<QuarterScoreDto> ScoreHistory);
 
-public sealed record CompanyDto(int Id, string Ticker, string Name, string Segment, double LatestRiskSignal);
+public sealed record CompanyDto(int Id, string Ticker, string Name, string Segment, double LatestMomentumSignal);
 
 public sealed record CompanyDetailDto(
     CompanyDto Company,
     IReadOnlyList<MetricDto> Metrics,
     IReadOnlyList<SignalDto> Signals,
+    IReadOnlyList<SignalDto> CurrentSignals,
+    IReadOnlyList<SignalDto> HistoricalSignals,
     IReadOnlyList<SourceDocumentDto> Sources);
 
 public sealed record MetricDto(string Quarter, string Kind, decimal Value, string Unit);
@@ -28,9 +31,7 @@ public sealed record SignalDto(string? Ticker, string Quarter, RiskScoreCategory
 
 public sealed record CategoryStatusDto(RiskScoreCategory Category, decimal AverageSignal, string Status, string Summary);
 
-public sealed record TranscriptSignalDto(string Ticker, string Quarter, string Title, string KeywordGroup, int Count, DateOnly PublishedDate);
-
-public sealed record QuarterScoreDto(string Quarter, int Score, int Change, string Band);
+public sealed record QuarterScoreDto(string Quarter, int Score, int? Change, string Band);
 
 public sealed record AlertDto(int Id, AlertSeverity Severity, string Title, string Message, DateTimeOffset CreatedAt, bool IsAcknowledged);
 

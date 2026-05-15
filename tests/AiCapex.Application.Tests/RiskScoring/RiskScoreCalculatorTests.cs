@@ -11,18 +11,18 @@ public class RiskScoreCalculatorTests
         var weights = RiskScoreWeights.Default;
         var inputs = new[]
         {
-            new RiskScoreInput(RiskScoreCategory.HyperscalerCapexRevisionTrend, 40),
-            new RiskScoreInput(RiskScoreCategory.HbmDramPricingAllocation, 20),
+            new RiskScoreInput(RiskScoreCategory.HyperscalerCapexRevisionTrend, 4),
+            new RiskScoreInput(RiskScoreCategory.HbmDramPricingAllocation, 2),
             new RiskScoreInput(RiskScoreCategory.CowosAdvancedPackaging, 0),
-            new RiskScoreInput(RiskScoreCategory.DataCenterPower, -20),
-            new RiskScoreInput(RiskScoreCategory.AiRevenueMonetization, 60),
-            new RiskScoreInput(RiskScoreCategory.FinancialStressFreeCashFlow, 80)
+            new RiskScoreInput(RiskScoreCategory.DataCenterPower, -2),
+            new RiskScoreInput(RiskScoreCategory.AiRevenueMonetization, 6),
+            new RiskScoreInput(RiskScoreCategory.FinancialStressFreeCashFlow, 8)
         };
 
         var snapshot = new RiskScoreCalculator(weights).Calculate(inputs);
 
         Assert.Equal(64, snapshot.Score);
-        Assert.Equal("Healthy expansion", snapshot.Band);
+        Assert.Equal("Strong", snapshot.Band);
     }
 
     [Fact]
@@ -41,16 +41,16 @@ public class RiskScoreCalculatorTests
         var snapshot = new RiskScoreCalculator(RiskScoreWeights.Default).Calculate(inputs);
 
         Assert.Equal(100, snapshot.Score);
-        Assert.Equal("Bullish acceleration", snapshot.Band);
+        Assert.Equal("Very strong", snapshot.Band);
     }
 
     [Theory]
-    [InlineData(0, "Capex rollover risk")]
-    [InlineData(25, "Slowdown forming")]
-    [InlineData(40, "Watch zone")]
-    [InlineData(55, "Healthy expansion")]
-    [InlineData(75, "Bullish acceleration")]
-    [InlineData(100, "Bullish acceleration")]
+    [InlineData(0, "Very weak")]
+    [InlineData(25, "Weak")]
+    [InlineData(40, "Neutral")]
+    [InlineData(60, "Strong")]
+    [InlineData(80, "Very strong")]
+    [InlineData(100, "Very strong")]
     public void Assigns_expansion_bands_from_score(int score, string expectedBand)
     {
         Assert.Equal(expectedBand, RiskScoreCalculator.GetBand(score));

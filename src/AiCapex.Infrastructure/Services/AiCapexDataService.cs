@@ -1,4 +1,5 @@
 using AiCapex.Application.Dashboard;
+using AiCapex.Application.Scoring;
 using AiCapex.Application.Services;
 using AiCapex.Domain.Entities;
 using AiCapex.Domain.Scoring;
@@ -13,43 +14,42 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
     public async Task<DashboardSummaryDto> GetDashboardSummaryAsync(CancellationToken cancellationToken = default)
     {
         var history = await GetRiskScoreHistoryAsync(cancellationToken);
-        var latest = history.LastOrDefault() ?? new QuarterScoreDto("No score yet", 50, 0, "Watch zone");
+        var latest = history.LastOrDefault() ?? new QuarterScoreDto("No score yet", 50, 0, "Neutral");
         var categories = await GetIndicatorTrendsAsync(cancellationToken);
-        var signals = (await SignalQuery().ToListAsync(cancellationToken))
-            .Concat(BuildCategoryDashboardSignals(categories, latest.Quarter))
-            .ToList();
+        var signals = BuildCategoryDashboardSignals(categories, latest.Quarter).ToList();
         var bullishSignals = signals.Where(x => x.ScoreImpact > 0).OrderByDescending(x => x.ScoreImpact).Take(4).ToList();
         var bearishSignals = signals.Where(x => x.ScoreImpact < 0).OrderBy(x => x.ScoreImpact).Take(4).ToList();
+        var topCompanyDrivers = await GetTopCompanyDriversAsync(cancellationToken);
         var bearishSummary = BuildSignalSummary(bearishSignals, "No bearish real-data signals imported yet.");
-        if (bearishSignals.Count == 0 && bullishSignals.Count > 0)
-        {
-            bearishSignals = signals.Where(x => x.ScoreImpact > 0).OrderBy(x => x.ScoreImpact).Take(4).ToList();
-            bearishSummary = $"No bearish signals imported yet. Weakest current signals: {BuildSignalSummary(bearishSignals, "")}";
-        }
 
         return new DashboardSummaryDto(
             latest.Score,
-            latest.Change,
+            latest.Change ?? 0,
             latest.Band,
             BuildSignalSummary(bullishSignals, "No bullish real-data signals imported yet."),
             bearishSummary,
             bullishSignals,
             bearishSignals,
+            topCompanyDrivers,
             categories,
             history);
     }
 
     public async Task<IReadOnlyList<CompanyDto>> GetCompaniesAsync(CancellationToken cancellationToken = default)
     {
-        return await db.Companies
+        var companies = await db.Companies
             .OrderBy(x => x.Ticker)
-            .Select(x => new CompanyDto(
-                x.Id,
-                x.Ticker,
-                x.Name,
-                x.Segment,
-                db.IndicatorSignals.Where(s => s.CompanyId == x.Id).Select(s => (int?)s.ScoreImpact).Average() ?? 0))
             .ToListAsync(cancellationToken);
+        var result = new List<CompanyDto>(companies.Count);
+
+        foreach (var company in companies)
+        {
+            var signals = await GetCurrentCompanyScoreSignalsAsync(company, cancellationToken);
+            var latestMomentumSignal = signals.Count == 0 ? 0 : Math.Round(AggregateCompanySignals(signals), 1);
+            result.Add(new CompanyDto(company.Id, company.Ticker, company.Name, company.Segment, (double)SignalScoreInterpreter.ToDisplaySignal(latestMomentumSignal)));
+        }
+
+        return result;
     }
 
     public async Task<CompanyDetailDto?> GetCompanyAsync(string ticker, CancellationToken cancellationToken = default)
@@ -61,22 +61,20 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         }
 
         var metrics = await GetCompanyMetricsAsync(company.Ticker, cancellationToken);
-        var signals = await db.IndicatorSignals
-            .Include(x => x.Company)
-            .Include(x => x.FiscalQuarter)
-            .Where(x => x.CompanyId == company.Id)
-            .Select(x => new SignalDto(
-                x.Company == null ? null : x.Company.Ticker,
-                x.FiscalQuarter!.Label,
-                x.Category,
-                x.Name,
-                x.Direction,
-                x.ScoreImpact,
-                x.Summary))
-            .ToListAsync(cancellationToken);
-        signals.AddRange(await GetCompanyDerivedSignalsAsync(company, cancellationToken));
-        var latestRiskSignal = signals.Count == 0 ? 0 : Math.Round(signals.Average(x => x.ScoreImpact), 1);
-        var dto = new CompanyDto(company.Id, company.Ticker, company.Name, company.Segment, (double)latestRiskSignal);
+        var signals = (await GetCompanySignalsAsync(company, cancellationToken))
+            .Where(x => !IsKeywordTranscriptSignal(x))
+            .ToList();
+        var currentScoreSignals = (await GetCurrentCompanyScoreSignalsAsync(company, cancellationToken))
+            .Where(x => !IsKeywordTranscriptSignal(x))
+            .ToList();
+        var currentSignals = currentScoreSignals
+            .Select(ToDisplaySignalDto)
+            .ToList();
+        var historicalSignals = signals
+            .Where(signal => !currentSignals.Any(current => SameSignal(current, signal)))
+            .ToList();
+        var latestMomentumSignal = currentScoreSignals.Count == 0 ? 0 : Math.Round(AggregateCompanySignals(currentScoreSignals), 1);
+        var dto = new CompanyDto(company.Id, company.Ticker, company.Name, company.Segment, (double)SignalScoreInterpreter.ToDisplaySignal(latestMomentumSignal));
 
         var sources = await db.SourceDocuments
             .Include(x => x.Company)
@@ -90,7 +88,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 x.PublishedDate))
             .ToListAsync(cancellationToken);
 
-        return new CompanyDetailDto(dto, metrics, signals, sources);
+        return new CompanyDetailDto(dto, metrics, signals, currentSignals, historicalSignals, sources);
     }
 
     private async Task<IReadOnlyList<SignalDto>> GetCompanyDerivedSignalsAsync(Company company, CancellationToken cancellationToken)
@@ -113,7 +111,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
             .FirstOrDefault(x => x.Kind == MetricKind.CapexAsPercentOfOperatingCashFlow || x.MetricName == "Capex / OCF");
         if (capexRatio is not null)
         {
-            var impact = Math.Round(Math.Clamp((50m - capexRatio.Value) * 2m, -80m, 40m), 1);
+            var impact = DerivedFinancialSignalScorer.ScoreCapexOcf(capexRatio.Value);
+            impact = await AdjustCapexStressForSemiconductorDemandAsync(company, impact, cancellationToken);
             signals.Add(new SignalDto(
                 company.Ticker,
                 SignalQuarter(latestMetricQuarter?.FiscalQuarter, latestMetricQuarter?.SourcePeriodLabel),
@@ -131,7 +130,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         if (company.IsHyperscaler && capexGrowthValues.Count > 0)
         {
             var averageGrowth = capexGrowthValues.Average();
-            var impact = Math.Round(Math.Clamp(averageGrowth, -70m, 60m), 1);
+            var impact = DerivedFinancialSignalScorer.ScoreCapexGrowth(averageGrowth);
             signals.Add(new SignalDto(
                 company.Ticker,
                 SignalQuarter(latestMetricQuarter?.FiscalQuarter, latestMetricQuarter?.SourcePeriodLabel),
@@ -142,40 +141,130 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 $"Latest capex growth average is {averageGrowth:0.0}%."));
         }
 
-        var mentions = await db.TranscriptMentions
-            .Include(x => x.Transcript)!.ThenInclude(x => x!.FiscalQuarter)
-            .Where(x => x.Transcript != null && x.Transcript.CompanyId == company.Id)
-            .ToListAsync(cancellationToken);
-        var latestTranscriptId = mentions
-            .Where(x => x.Transcript is not null && TranscriptPeriodEnd(x.Transcript) <= asOfPeriodEnd)
-            .GroupBy(x => x.Transcript!.CompanyId)
-            .Select(x => x
-                .OrderByDescending(v => TranscriptPeriodEnd(v.Transcript!))
-                .ThenByDescending(v => v.Transcript!.ImportedAtUtc)
-                .First()
-                .TranscriptId)
-            .FirstOrDefault();
-
-        signals.AddRange(mentions
-            .Where(x => x.TranscriptId == latestTranscriptId)
-            .GroupBy(x => MapTranscriptGroup(x.KeywordGroup))
-            .Select(group =>
-            {
-                var strongestMention = group.OrderByDescending(x => x.Count).First();
-                var impact = Math.Round(group.Average(x => x.SentimentScore), 1);
-                return new SignalDto(
-                    company.Ticker,
-                    SignalQuarter(strongestMention.Transcript?.FiscalQuarter, strongestMention.Transcript?.SourcePeriodLabel),
-                    group.Key,
-                    $"{FormatCategoryName(group.Key)} transcript signal",
-                    DirectionFromImpact(impact),
-                    impact,
-                    TextSanitizer.ToPlainText(strongestMention.ContextSnippet ?? $"{strongestMention.KeywordGroup} transcript mentions from {strongestMention.Transcript?.Title ?? "imported transcript"}."));
-            }));
-
         return signals
             .OrderByDescending(x => Math.Abs(x.ScoreImpact))
             .ThenBy(x => x.Category.ToString())
+            .ToList();
+    }
+
+    private async Task<decimal> AdjustCapexStressForSemiconductorDemandAsync(Company company, decimal impact, CancellationToken cancellationToken)
+    {
+        if (!company.IsSemiconductor || impact >= 0)
+        {
+            return impact;
+        }
+
+        var asOfPeriodEnd = CurrentCalendarQuarterEnd();
+        var latestSignals = (await db.IndicatorSignals
+                .Include(x => x.FiscalQuarter)
+                .Where(x => x.CompanyId == company.Id &&
+                    x.FiscalQuarter != null &&
+                    x.FiscalQuarter.PeriodEnd <= asOfPeriodEnd)
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.Category)
+            .Select(group => group
+                .OrderByDescending(x => x.FiscalQuarter!.PeriodEnd)
+                .First())
+            .ToList();
+
+        var hbm = latestSignals.FirstOrDefault(x => x.Category == RiskScoreCategory.HbmDramPricingAllocation);
+        var monetization = latestSignals.FirstOrDefault(x => x.Category == RiskScoreCategory.AiRevenueMonetization);
+        var financialStress = latestSignals.FirstOrDefault(x => x.Category == RiskScoreCategory.FinancialStressFreeCashFlow);
+        var demandSupport = new[] { hbm, monetization, financialStress }
+            .Where(x => x is not null)
+            .Select(x => SignalScoreInterpreter.ToScoringSignal(x!.ScoreImpact, x.SignalName))
+            .ToList();
+
+        if (demandSupport.Count < 3 || demandSupport.Average() < 3.5m)
+        {
+            return impact;
+        }
+
+        // Semiconductor expansions can temporarily run above OCF during a genuine
+        // demand-led HBM buildout. Keep the warning visible, but do not treat it
+        // like pure distress when current demand and cash commentary are strong.
+        return Math.Max(impact, -2.5m);
+    }
+
+    private async Task<IReadOnlyList<SignalDto>> GetCompanySignalsAsync(Company company, CancellationToken cancellationToken)
+    {
+        var signals = await db.IndicatorSignals
+            .Include(x => x.Company)
+            .Include(x => x.FiscalQuarter)
+            .Where(x => x.CompanyId == company.Id)
+            .Select(x => new SignalDto(
+                x.Company == null ? null : x.Company.Ticker,
+                x.FiscalQuarter!.Label,
+                x.Category,
+                x.Name,
+                DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
+                SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
+                x.Summary))
+            .ToListAsync(cancellationToken);
+        signals.AddRange(await GetCompanyDerivedSignalsAsync(company, cancellationToken));
+        return signals.Select(ToDisplaySignalDto).ToList();
+    }
+
+    private async Task<IReadOnlyList<SignalDto>> GetCurrentCompanyScoreSignalsAsync(Company company, CancellationToken cancellationToken)
+    {
+        var asOfPeriodEnd = CurrentCalendarQuarterEnd();
+        var storedSignals = await db.IndicatorSignals
+                .Include(x => x.Company)
+                .Include(x => x.FiscalQuarter)
+                .Where(x => x.CompanyId == company.Id &&
+                    x.FiscalQuarter != null &&
+                    x.FiscalQuarter.PeriodEnd <= asOfPeriodEnd)
+                .ToListAsync(cancellationToken);
+        var latestStoredSignals = storedSignals
+            .GroupBy(x => x.Category)
+            .Select(group => group
+                .OrderByDescending(x => x.FiscalQuarter!.PeriodEnd)
+                .ThenByDescending(x => Math.Abs(x.ScoreImpact))
+                .First())
+            .Select(x => new SignalDto(
+                x.Company == null ? null : x.Company.Ticker,
+                x.FiscalQuarter!.Label,
+                x.Category,
+                x.Name,
+                DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
+                SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
+                x.Summary))
+            .ToList();
+
+        var derivedSignals = (await GetCompanyDerivedSignalsAsync(company, cancellationToken)).ToList();
+        var directionalCategories = latestStoredSignals
+            .Where(x => x.ScoreImpact != 0)
+            .Select(x => x.Category)
+            .ToHashSet();
+        derivedSignals.RemoveAll(x =>
+            x.ScoreImpact == 0 &&
+            x.Name.EndsWith("transcript signal", StringComparison.OrdinalIgnoreCase) &&
+            directionalCategories.Contains(x.Category));
+
+        return latestStoredSignals
+            .Concat(derivedSignals)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<SignalDto>> GetTopCompanyDriversAsync(CancellationToken cancellationToken)
+    {
+        var companies = await db.Companies
+            .OrderBy(x => x.Ticker)
+            .ToListAsync(cancellationToken);
+        var signals = new List<SignalDto>();
+
+        foreach (var company in companies)
+        {
+            signals.AddRange((await GetCurrentCompanyScoreSignalsAsync(company, cancellationToken))
+                .Where(x => x.ScoreImpact != 0 && !IsKeywordTranscriptSignal(x)));
+        }
+
+        return signals
+            .Select(ToDisplaySignalDto)
+            .OrderByDescending(x => Math.Abs(x.ScoreImpact))
+            .ThenBy(x => x.Ticker)
+            .ThenBy(x => x.Category.ToString())
+            .Take(5)
             .ToList();
     }
 
@@ -215,16 +304,20 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         var asOfPeriodEnd = CurrentCalendarQuarterEnd();
         var indicatorSignals = await db.IndicatorSignals
             .Include(x => x.FiscalQuarter)
-            .Where(x => x.FiscalQuarter != null && x.FiscalQuarter.PeriodEnd <= asOfPeriodEnd)
+            .Where(x => x.FiscalQuarter != null &&
+                x.FiscalQuarter.PeriodEnd <= asOfPeriodEnd)
             .ToListAsync(cancellationToken);
         var latestIndicatorSignals = indicatorSignals
             .GroupBy(x => new { x.Category, x.CompanyId })
             .SelectMany(x => x.OrderByDescending(v => v.FiscalQuarter!.PeriodEnd).Take(1))
-            .Select(x => new CategorySignal(x.Category, x.ScoreImpact, x.Summary))
+            .Select(x => new CategorySignal(
+                x.Category,
+                SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
+                x.Confidence,
+                x.Summary))
             .ToList();
-        var transcriptSignals = await GetTranscriptDerivedSignalsAsync(asOfPeriodEnd, cancellationToken);
         var metricSignals = await GetMetricDerivedSignalsAsync(asOfPeriodEnd, cancellationToken);
-        var signals = latestIndicatorSignals.Concat(transcriptSignals).Concat(metricSignals).ToList();
+        var signals = latestIndicatorSignals.Concat(metricSignals).ToList();
         var signalsByCategory = signals
             .GroupBy(x => x.Category)
             .ToDictionary(x => x.Key, x => x.ToList());
@@ -237,46 +330,17 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                     return new CategoryStatusDto(category, 0, "No data yet", "No real signals imported for this category yet.");
                 }
 
-                var average = Math.Round(categorySignals.Average(v => v.ScoreImpact), 1);
+                var average = CategorySignalAggregator.Aggregate(categorySignals.Select(v => (v.ScoreImpact, v.Confidence)));
+                var displayAverage = SignalScoreInterpreter.ToDisplaySignal(average);
                 return new CategoryStatusDto(
                     category,
-                    average,
-                    average < -25 ? "Weakening" : average > 15 ? "Constructive" : "Mixed",
-                    TextSanitizer.ToPlainText(categorySignals.OrderByDescending(v => Math.Abs(v.ScoreImpact)).Select(v => v.Summary).First()));
+                    displayAverage,
+                    CategoryLabel(displayAverage),
+                    TextSanitizer.ToPlainText(SelectCategorySummary(categorySignals, average)));
             })
             .OrderByDescending(x => x.Status != "No data yet")
             .ThenByDescending(x => Math.Abs(x.AverageSignal))
             .ThenBy(x => x.Category.ToString())
-            .ToList();
-    }
-
-    private async Task<IReadOnlyList<CategorySignal>> GetTranscriptDerivedSignalsAsync(DateOnly asOfPeriodEnd, CancellationToken cancellationToken)
-    {
-        var mentions = await db.TranscriptMentions
-            .Include(x => x.Transcript)!.ThenInclude(x => x!.FiscalQuarter)
-            .ToListAsync(cancellationToken);
-        var latestTranscriptIds = mentions
-            .Where(x => x.Transcript is not null && TranscriptPeriodEnd(x.Transcript) <= asOfPeriodEnd)
-            .GroupBy(x => x.Transcript!.CompanyId)
-            .Select(x => x
-                .OrderByDescending(v => TranscriptPeriodEnd(v.Transcript!))
-                .ThenByDescending(v => v.Transcript!.ImportedAtUtc)
-                .First()
-                .TranscriptId)
-            .ToHashSet();
-
-        return mentions
-            .Where(x => latestTranscriptIds.Contains(x.TranscriptId))
-            .GroupBy(x => MapTranscriptGroup(x.KeywordGroup))
-            .Select(group =>
-            {
-                var strongestMention = group
-                    .OrderByDescending(x => x.Count)
-                    .First();
-                var summary = strongestMention.ContextSnippet ??
-                    $"{strongestMention.KeywordGroup} transcript mentions from {strongestMention.Transcript?.Title ?? "imported transcript"}.";
-                return new CategorySignal(group.Key, Math.Round(group.Average(x => x.SentimentScore), 1), summary);
-            })
             .ToList();
     }
 
@@ -302,7 +366,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
             var averageRatio = capexRatios.Average();
             signals.Add(new CategorySignal(
                 RiskScoreCategory.FinancialStressFreeCashFlow,
-                Math.Round(Math.Clamp((50m - averageRatio) * 2m, -80m, 40m), 1),
+                DerivedFinancialSignalScorer.ScoreCapexOcf(averageRatio),
+                80,
                 $"Average capex/OCF is {averageRatio:0.0}%."));
         }
 
@@ -316,37 +381,12 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
             var averageGrowth = hyperscalerGrowth.Average();
             signals.Add(new CategorySignal(
                 RiskScoreCategory.HyperscalerCapexRevisionTrend,
-                Math.Round(Math.Clamp(averageGrowth, -70m, 60m), 1),
+                DerivedFinancialSignalScorer.ScoreCapexGrowth(averageGrowth),
+                85,
                 $"Average hyperscaler capex growth is {averageGrowth:0.0}%."));
         }
 
         return signals;
-    }
-
-    private static RiskScoreCategory MapTranscriptGroup(string group) => group switch
-    {
-        "Memory/HBM" => RiskScoreCategory.HbmDramPricingAllocation,
-        "Packaging" => RiskScoreCategory.CowosAdvancedPackaging,
-        "Power" => RiskScoreCategory.DataCenterPower,
-        "Capex" => RiskScoreCategory.HyperscalerCapexRevisionTrend,
-        "Financial stress" => RiskScoreCategory.FinancialStressFreeCashFlow,
-        _ => RiskScoreCategory.AiRevenueMonetization
-    };
-
-    public async Task<IReadOnlyList<TranscriptSignalDto>> GetTranscriptSignalsAsync(CancellationToken cancellationToken = default)
-    {
-        return await db.TranscriptMentions
-            .Include(x => x.Transcript)!.ThenInclude(x => x!.Company)
-            .Include(x => x.Transcript)!.ThenInclude(x => x!.FiscalQuarter)
-            .OrderByDescending(x => x.Count)
-            .Select(x => new TranscriptSignalDto(
-                x.Transcript!.Company!.Ticker,
-                x.Transcript.FiscalQuarter!.Label,
-                x.Transcript.Title,
-                x.KeywordGroup,
-                x.Count,
-                x.Transcript.PublishedDate))
-            .ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<QuarterScoreDto>> GetRiskScoreHistoryAsync(CancellationToken cancellationToken = default)
@@ -358,9 +398,34 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
             .OrderByDescending(x => x.FiscalQuarter!.PeriodEnd)
             .Take(8)
             .OrderBy(x => x.FiscalQuarter!.PeriodEnd)
-            .Select(x => new QuarterScoreDto(x.FiscalQuarter!.Label, x.Score, x.ChangeFromPreviousQuarter, x.Band))
+            .Select(x => new
+            {
+                x.FiscalQuarter!.Year,
+                x.FiscalQuarter.Quarter,
+                x.FiscalQuarter.PeriodEnd,
+                x.Score,
+                x.ChangeFromPreviousQuarter,
+                x.Band
+            })
             .ToListAsync(cancellationToken);
-        return snapshots;
+
+        var result = snapshots
+            .Select(x => new QuarterScoreDto($"Q{x.Quarter} {x.Year}", x.Score, x.ChangeFromPreviousQuarter, x.Band))
+            .ToList();
+
+        var firstSnapshot = snapshots.FirstOrDefault();
+        if (firstSnapshot is not null)
+        {
+            var hasPriorSnapshot = await db.RiskScoreSnapshots
+                .Include(x => x.FiscalQuarter)
+                .AnyAsync(x => x.FiscalQuarter != null && x.FiscalQuarter.PeriodEnd < firstSnapshot.PeriodEnd, cancellationToken);
+            if (!hasPriorSnapshot)
+            {
+                result[0] = result[0] with { Change = null };
+            }
+        }
+
+        return result;
     }
 
     public async Task<IReadOnlyList<AlertDto>> GetAlertsAsync(CancellationToken cancellationToken = default)
@@ -388,8 +453,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
 
         var direction = request.ScoreImpact switch
         {
-            > 5 => SignalDirection.Bullish,
-            < -5 => SignalDirection.Bearish,
+            > 1 => SignalDirection.Bullish,
+            < -1 => SignalDirection.Bearish,
             _ => SignalDirection.Neutral
         };
 
@@ -400,7 +465,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
             Category = category,
             Name = request.SourceTitle,
             Direction = direction,
-            ScoreImpact = request.ScoreImpact,
+            ScoreImpact = SignalScoreInterpreter.FromDisplaySignal(request.ScoreImpact),
             Summary = request.Summary
         };
 
@@ -416,7 +481,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        return new SignalDto(company.Ticker, quarter.Label, category, signal.Name, direction, signal.ScoreImpact, signal.Summary);
+        return ToDisplaySignalDto(new SignalDto(company.Ticker, quarter.Label, category, signal.Name, direction, signal.ScoreImpact, signal.Summary));
     }
 
     private IQueryable<SignalDto> SignalQuery()
@@ -429,8 +494,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 x.FiscalQuarter!.Label,
                 x.Category,
                 x.Name,
-                x.Direction,
-                x.ScoreImpact,
+                DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
+                SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
                 x.Summary));
     }
 
@@ -457,6 +522,22 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         return string.Join(" ", signals.Take(3).Select(x => TextSanitizer.ToPlainText(x.Summary)));
     }
 
+    private static string SelectCategorySummary(IReadOnlyList<CategorySignal> signals, decimal aggregate)
+    {
+        var matchingSignals = aggregate switch
+        {
+            > 1 => signals.Where(x => x.ScoreImpact > 1),
+            < -1 => signals.Where(x => x.ScoreImpact < -1),
+            _ => signals.Where(x => x.ScoreImpact is >= -1 and <= 1)
+        };
+
+        var candidates = matchingSignals.Any() ? matchingSignals : signals;
+        return candidates
+            .OrderByDescending(x => Math.Abs(x.ScoreImpact))
+            .Select(x => x.Summary)
+            .First();
+    }
+
     private static IEnumerable<SignalDto> BuildCategoryDashboardSignals(IReadOnlyList<CategoryStatusDto> categories, string quarter)
     {
         return categories
@@ -466,15 +547,15 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 quarter,
                 x.Category,
                 $"{FormatCategoryName(x.Category)} derived signal",
-                x.AverageSignal > 0 ? SignalDirection.Bullish : SignalDirection.Bearish,
+                DirectionFromImpact(x.AverageSignal),
                 x.AverageSignal,
                 x.Summary));
     }
 
     private static SignalDirection DirectionFromImpact(decimal impact) => impact switch
     {
-        > 5 => SignalDirection.Bullish,
-        < -5 => SignalDirection.Bearish,
+        > 1 => SignalDirection.Bullish,
+        < -1 => SignalDirection.Bearish,
         _ => SignalDirection.Neutral
     };
 
@@ -492,6 +573,42 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         _ => category.ToString()
     };
 
+    private static string CategoryLabel(decimal signal) => signal switch
+    {
+        <= -6 => "Very bearish",
+        < -1 => "Bearish",
+        <= 1 => "Neutral",
+        < 6 => "Bullish",
+        _ => "Very bullish"
+    };
+
+    private static SignalDirection DisplayDirection(decimal rawScore, string? signalName, SignalDirection storedDirection)
+    {
+        var interpretedScore = SignalScoreInterpreter.ToScoringSignal(rawScore, signalName);
+        return interpretedScore switch
+        {
+            > 1 => SignalDirection.Bullish,
+            < -1 => SignalDirection.Bearish,
+            _ => SignalDirection.Neutral
+        };
+    }
+
+    private static decimal AggregateCompanySignals(IReadOnlyList<SignalDto> signals) =>
+        CategorySignalAggregator.Aggregate(signals.Select(x => (x.ScoreImpact, 75)));
+
+    private static SignalDto ToDisplaySignalDto(SignalDto signal) =>
+        signal with { ScoreImpact = SignalScoreInterpreter.ToDisplaySignal(signal.ScoreImpact) };
+
+    private static bool SameSignal(SignalDto left, SignalDto right) =>
+        left.Quarter == right.Quarter &&
+        left.Category == right.Category &&
+        left.Name == right.Name &&
+        left.ScoreImpact == right.ScoreImpact &&
+        left.Summary == right.Summary;
+
+    private static bool IsKeywordTranscriptSignal(SignalDto signal) =>
+        signal.Name.EndsWith("transcript signal", StringComparison.OrdinalIgnoreCase);
+
     private static DateOnly CurrentCalendarQuarterEnd()
     {
         var today = DateTime.UtcNow;
@@ -501,7 +618,5 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
 
     private static DateOnly MetricPeriodEnd(FinancialMetric metric) => metric.PeriodEndDate ?? metric.FiscalQuarter?.PeriodEnd ?? DateOnly.MinValue;
 
-    private static DateOnly TranscriptPeriodEnd(Transcript transcript) => transcript.PeriodEndDate ?? transcript.CallDate ?? transcript.FiscalQuarter?.PeriodEnd ?? transcript.PublishedDate;
-
-    private sealed record CategorySignal(RiskScoreCategory Category, decimal ScoreImpact, string Summary);
+    private sealed record CategorySignal(RiskScoreCategory Category, decimal ScoreImpact, int Confidence, string Summary);
 }

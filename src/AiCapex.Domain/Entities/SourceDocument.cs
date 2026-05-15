@@ -17,4 +17,7 @@ public sealed class SourceDocument
     public string? Snippet { get; set; }
     public decimal CredibilityWeight { get; set; } = 1m;
     public string Status { get; set; } = "Imported";
+    public string? AnalysisProvider { get; set; }
+    public string? AnalysisModel { get; set; }
+    public string? AnalysisJson { get; set; }
 }
