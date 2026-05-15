@@ -12,18 +12,20 @@ const nav = [
   ["/manual-entry", "Manual Entry", PlusCircle]
 ] as const;
 
+const appBase = normalizeBase(import.meta.env.BASE_URL);
+
 export function App() {
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState(routeFromLocation(window.location.pathname));
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
+    const onPop = () => setPath(routeFromLocation(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const go = (to: string) => {
-    window.history.pushState(null, "", to);
+    window.history.pushState(null, "", toAppPath(to));
     setPath(to);
   };
   const refreshStats = () => setRefreshKey((value) => value + 1);
@@ -433,4 +435,21 @@ function scoreClass(score: number) {
   if (score <= 54) return "scoreWatch";
   if (score <= 74) return "scoreHealthy";
   return "scoreBullish";
+}
+
+function normalizeBase(base: string) {
+  if (!base || base === "/") return "/";
+  return `/${base.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+function routeFromLocation(pathname: string) {
+  if (appBase === "/") return pathname || "/";
+  const baseWithoutTrailingSlash = appBase.slice(0, -1);
+  if (pathname === baseWithoutTrailingSlash || pathname === appBase) return "/";
+  return pathname.startsWith(appBase) ? `/${pathname.slice(appBase.length)}` : pathname;
+}
+
+function toAppPath(route: string) {
+  if (appBase === "/") return route;
+  return route === "/" ? appBase : `${appBase.slice(0, -1)}${route}`;
 }

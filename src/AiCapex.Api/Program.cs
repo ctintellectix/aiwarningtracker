@@ -12,15 +12,23 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 });
 builder.Services.AddOpenApi();
 builder.Services.AddInfrastructure(builder.Configuration);
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:5173", "http://localhost:4173"];
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("frontend", policy =>
-        policy.WithOrigins("http://localhost:5173", "http://localhost:4173")
+        policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod());
 });
 
 var app = builder.Build();
+var pathBase = builder.Configuration["Deployment:PathBase"];
+
+if (!string.IsNullOrWhiteSpace(pathBase))
+{
+    app.UsePathBase(pathBase);
+}
 
 using (var scope = app.Services.CreateScope())
 {
