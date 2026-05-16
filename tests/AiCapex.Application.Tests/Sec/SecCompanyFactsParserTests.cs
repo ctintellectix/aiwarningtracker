@@ -179,4 +179,32 @@ public class SecCompanyFactsParserTests
 
         Assert.Contains(metrics, metric => metric.MetricName == "Debt" && metric.FiscalQuarter == 2 && metric.Value == 28689m);
     }
+
+    [Fact]
+    public void Derives_missing_q4_flow_metrics_from_annual_totals()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-06-10"), DateOnly.Parse("2025-05-02"), 23378m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 29776m, "url", null, DateOnly.Parse("2025-05-03")),
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2025-12-09"), DateOnly.Parse("2025-10-31"), 27005m, "url", null, DateOnly.Parse("2025-08-02")),
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "FY", "10-K", DateOnly.Parse("2026-03-16"), DateOnly.Parse("2026-01-30"), 113538m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-06-10"), DateOnly.Parse("2025-05-02"), 568m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 1243m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2025-12-09"), DateOnly.Parse("2025-10-31"), 1912m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "FY", "10-K", DateOnly.Parse("2026-03-16"), DateOnly.Parse("2026-01-30"), 2633m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-06-10"), DateOnly.Parse("2025-05-02"), 2796m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 5339m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2025-12-09"), DateOnly.Parse("2025-10-31"), 6511m, "url", null, DateOnly.Parse("2025-02-01")),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "FY", "10-K", DateOnly.Parse("2026-03-16"), DateOnly.Parse("2026-01-30"), 11185m, "url", null, DateOnly.Parse("2025-02-01"))
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Revenue" && metric.FiscalQuarter == 4 && metric.Value == 33379m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Quarterly Capex" && metric.FiscalQuarter == 4 && metric.Value == 721m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Operating Cash Flow" && metric.FiscalQuarter == 4 && metric.Value == 4674m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Capex / OCF" && metric.FiscalQuarter == 4 && metric.Value == 15.43m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Capex QoQ Growth" && metric.FiscalQuarter == 4);
+    }
 }

@@ -77,6 +77,7 @@ public static class SecMetricExtractor
             }
         }
 
+        AddSyntheticQ4Metrics(metrics, facts);
         AddGrowthMetrics(metrics, "Quarterly Capex");
         AddTtmCapex(metrics);
         return metrics;
@@ -117,6 +118,104 @@ public static class SecMetricExtractor
         return quarter > 1 && prior is not null
             ? current.Value - prior.Value
             : current.Value;
+    }
+
+    private static void AddSyntheticQ4Metrics(List<SecExtractedMetric> metrics, IEnumerable<SecFactValue> facts)
+    {
+        var annualFacts = facts
+            .Where(x => x.FiscalPeriod.Equals("FY", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(x => new { x.FiscalYear, x.Unit })
+            .ToList();
+
+        foreach (var annualGroup in annualFacts)
+        {
+            if (metrics.Any(x =>
+                x.FiscalYear == annualGroup.Key.FiscalYear &&
+                x.FiscalQuarter == 4 &&
+                x.Unit == annualGroup.Key.Unit))
+            {
+                continue;
+            }
+
+            var annualRevenue = FirstDurationFact(annualGroup, "Revenues", "SalesRevenueNet", "Revenue");
+            var annualCapex = FirstDurationFact(
+                annualGroup,
+                "PaymentsToAcquirePropertyPlantAndEquipment",
+                "PaymentsToAcquireProductiveAssets",
+                "CapitalExpendituresIncurredButNotYetPaid",
+                "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities");
+            var annualOcf = FirstDurationFact(
+                annualGroup,
+                "NetCashProvidedByUsedInOperatingActivities",
+                "CashFlowsFromUsedInOperations");
+            var sourceUrl = annualGroup.First().SourceUrl;
+            var periodEndDate = annualGroup.Select(x => x.EndDate).Where(x => x.HasValue).Max();
+
+            var q1ToQ3 = metrics
+                .Where(x => x.FiscalYear == annualGroup.Key.FiscalYear &&
+                    x.FiscalQuarter is >= 1 and <= 3 &&
+                    x.Unit == annualGroup.Key.Unit)
+                .ToList();
+            AddSyntheticFlowMetric(metrics, annualRevenue, q1ToQ3, "Revenue", annualGroup.Key.FiscalYear, periodEndDate, sourceUrl);
+            AddSyntheticFlowMetric(metrics, annualCapex, q1ToQ3, "Quarterly Capex", annualGroup.Key.FiscalYear, periodEndDate, sourceUrl, absoluteValue: true);
+            AddSyntheticFlowMetric(metrics, annualOcf, q1ToQ3, "Operating Cash Flow", annualGroup.Key.FiscalYear, periodEndDate, sourceUrl);
+
+            var q4Capex = metrics.FirstOrDefault(x =>
+                x.FiscalYear == annualGroup.Key.FiscalYear &&
+                x.FiscalQuarter == 4 &&
+                x.MetricName == "Quarterly Capex" &&
+                x.Unit == annualGroup.Key.Unit);
+            var q4Ocf = metrics.FirstOrDefault(x =>
+                x.FiscalYear == annualGroup.Key.FiscalYear &&
+                x.FiscalQuarter == 4 &&
+                x.MetricName == "Operating Cash Flow" &&
+                x.Unit == annualGroup.Key.Unit);
+            if (q4Capex is not null && q4Ocf is not null && q4Ocf.Value != 0)
+            {
+                metrics.Add(q4Capex with
+                {
+                    MetricName = "Capex / OCF",
+                    Unit = "%",
+                    Value = Math.Round(Math.Abs(q4Capex.Value) / Math.Abs(q4Ocf.Value) * 100, 2)
+                });
+            }
+        }
+    }
+
+    private static void AddSyntheticFlowMetric(
+        List<SecExtractedMetric> metrics,
+        SecFactValue? annualFact,
+        IReadOnlyList<SecExtractedMetric> q1ToQ3,
+        string metricName,
+        int fiscalYear,
+        DateOnly? periodEndDate,
+        string sourceUrl,
+        bool absoluteValue = false)
+    {
+        if (annualFact is null ||
+            metrics.Any(x => x.FiscalYear == fiscalYear && x.FiscalQuarter == 4 && x.MetricName == metricName && x.Unit == annualFact.Unit))
+        {
+            return;
+        }
+
+        var priorQuarterValues = q1ToQ3
+            .Where(x => x.MetricName == metricName)
+            .OrderBy(x => x.FiscalQuarter)
+            .ToList();
+        if (priorQuarterValues.Count != 3)
+        {
+            return;
+        }
+
+        var q4Value = annualFact.Value - priorQuarterValues.Sum(x => x.Value);
+        metrics.Add(new SecExtractedMetric(
+            metricName,
+            fiscalYear,
+            4,
+            periodEndDate,
+            absoluteValue ? Math.Abs(q4Value) : q4Value,
+            annualFact.Unit,
+            sourceUrl));
     }
 
     private static bool TryQuarter(string fiscalPeriod, out int quarter) =>
