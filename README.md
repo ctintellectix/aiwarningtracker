@@ -1,4 +1,4 @@
-# AI CapEx Slowdown Monitor
+# AI CapEx Monitor
 
 Developer-friendly MVP dashboard for tracking public indicators of AI infrastructure capex momentum and producing a 0-100 AI CapEx Expansion Score.
 

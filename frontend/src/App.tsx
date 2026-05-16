@@ -34,8 +34,7 @@ export function App() {
         <div className="brand">
           <Gauge size={28} />
           <div>
-            <strong>AI CapEx</strong>
-            <span>Slowdown Monitor</span>
+            <strong>AI CapEx Monitor</strong>            
           </div>
         </div>
         <nav>
