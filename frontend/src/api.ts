@@ -16,6 +16,7 @@ export type Signal = {
   direction: "Bullish" | "Neutral" | "Bearish";
   scoreImpact: number;
   summary: string;
+  sourceLabel: string;
 };
 
 export type CategoryStatus = {

@@ -81,7 +81,8 @@ public static class SecCompanyFactsParser
                             GetDate(fact, "end"),
                             decimalValue,
                             sourceUrl,
-                            GetString(fact, "accn")));
+                            GetString(fact, "accn"),
+                            GetDate(fact, "start")));
                     }
                 }
             }

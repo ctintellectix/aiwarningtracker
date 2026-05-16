@@ -17,7 +17,7 @@ public class SecCompanyFactsParserTests
                     "label": "Capital expenditures",
                     "units": {
                       "USD": [
-                        { "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2025-10-24", "end": "2025-09-30", "val": 12340000000, "accn": "0000789019-25-000123" }
+                        { "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2025-10-24", "start": "2025-07-01", "end": "2025-09-30", "val": 12340000000, "accn": "0000789019-25-000123" }
                       ]
                     }
                   },
@@ -37,6 +37,7 @@ public class SecCompanyFactsParserTests
 
         Assert.Contains(facts, fact => fact.Tag == "PaymentsToAcquirePropertyPlantAndEquipment" && fact.Value == 12340000000m && fact.FiscalPeriod == "Q1");
         Assert.Contains(facts, fact => fact.Tag == "NetCashProvidedByUsedInOperatingActivities" && fact.Unit == "USD");
+        Assert.Contains(facts, fact => fact.Tag == "PaymentsToAcquirePropertyPlantAndEquipment" && fact.StartDate == DateOnly.Parse("2025-07-01"));
     }
 
     [Fact]
@@ -126,5 +127,56 @@ public class SecCompanyFactsParserTests
         var metrics = SecMetricExtractor.Extract(facts).ToList();
 
         Assert.Contains(metrics, metric => metric.MetricName == "Quarterly Capex" && metric.Value == 120m);
+    }
+
+    [Fact]
+    public void Converts_cumulative_cash_flow_facts_into_quarterly_metrics()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-06-10"), DateOnly.Parse("2025-05-02"), 568m, "url"),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 1243m, "url"),
+            new SecFactValue("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2025-12-09"), DateOnly.Parse("2025-10-31"), 1912m, "url"),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-06-10"), DateOnly.Parse("2025-05-02"), 1000m, "url"),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 2400m, "url"),
+            new SecFactValue("us-gaap", "NetCashProvidedByUsedInOperatingActivities", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2025-12-09"), DateOnly.Parse("2025-10-31"), 3900m, "url")
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Quarterly Capex" && metric.FiscalQuarter == 1 && metric.Value == 568m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Quarterly Capex" && metric.FiscalQuarter == 2 && metric.Value == 675m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Quarterly Capex" && metric.FiscalQuarter == 3 && metric.Value == 669m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Operating Cash Flow" && metric.FiscalQuarter == 2 && metric.Value == 1400m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Operating Cash Flow" && metric.FiscalQuarter == 3 && metric.Value == 1500m);
+        Assert.Contains(metrics, metric => metric.MetricName == "Capex / OCF" && metric.FiscalQuarter == 2 && metric.Value == 48.21m);
+    }
+
+    [Fact]
+    public void Prefers_standalone_quarter_revenue_over_ytd_revenue_when_both_exist()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 29776m, "url", null, DateOnly.Parse("2025-05-03")),
+            new SecFactValue("us-gaap", "Revenues", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 53154m, "url", null, DateOnly.Parse("2025-02-01"))
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Revenue" && metric.FiscalQuarter == 2 && metric.Value == 29776m);
+    }
+
+    [Fact]
+    public void Prefers_latest_period_end_debt_over_comparative_balance_sheet_values()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "LongTermDebt", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-01-31"), 24567m, "url"),
+            new SecFactValue("us-gaap", "LongTermDebt", "USD", 2026, "Q2", "10-Q", DateOnly.Parse("2025-09-08"), DateOnly.Parse("2025-08-01"), 28689m, "url")
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Debt" && metric.FiscalQuarter == 2 && metric.Value == 28689m);
     }
 }

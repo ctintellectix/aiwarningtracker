@@ -356,7 +356,7 @@ function SignalItem({ signal }: { signal: DashboardSummary["topPositiveIndicator
   return (
     <article className="signal">
       <strong>{signal.ticker ? `${signal.ticker} - ${signal.name}` : signal.name}</strong>
-      {signal.ticker && <small>{labelCategory(signal.category)}</small>}
+      {signal.ticker && <small>{labelCategory(signal.category)} | {signal.quarter} | {signal.sourceLabel}</small>}
       <span className={signalToneClass(signal.scoreImpact)} title={tooltips.signalImpact}>
         {signalBandLabel(signal.scoreImpact)} {signed(signal.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} />
       </span>
@@ -398,12 +398,35 @@ function MiniMetricChart({ title, metrics }: { title: string; metrics: { quarter
       <div>
         {metrics.slice(-8).map((metric) => (
           <span key={`${metric.quarter}-${metric.value}`} style={{ height: `${Math.max((Math.abs(metric.value) / max) * 150, 8)}px` }}>
-            <small>{metric.value.toFixed(metric.unit === "%" ? 1 : 0)}</small>
+            <small>{formatMiniMetricValue(metric.value, metric.unit)}</small>
           </span>
         ))}
       </div>
     </section>
   );
+}
+
+function formatMiniMetricValue(value: number, unit: string) {
+  if (unit === "%") {
+    return `${value.toFixed(1)}%`;
+  }
+
+  const absolute = Math.abs(value);
+  const compactUnits = [
+    { threshold: 1_000_000_000_000, suffix: "T" },
+    { threshold: 1_000_000_000, suffix: "B" },
+    { threshold: 1_000_000, suffix: "M" },
+    { threshold: 1_000, suffix: "K" }
+  ];
+  const compactUnit = compactUnits.find((item) => absolute >= item.threshold);
+
+  if (!compactUnit) {
+    return value.toFixed(0);
+  }
+
+  const scaled = value / compactUnit.threshold;
+  const decimals = Math.abs(scaled) < 10 ? 1 : 0;
+  return `${scaled.toFixed(decimals)}${compactUnit.suffix}`;
 }
 
 function Loading({ error }: { error?: string }) {

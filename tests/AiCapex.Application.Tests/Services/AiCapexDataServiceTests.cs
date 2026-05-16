@@ -1146,4 +1146,60 @@ public class AiCapexDataServiceTests
         Assert.Equal(6, summary.TopCompanyDrivers[1].ScoreImpact);
         Assert.DoesNotContain(summary.TopCompanyDrivers, x => x.Name == "AMD old signal");
     }
+
+    [Fact]
+    public async Task GetCompanyAsync_includes_source_labels_for_imported_and_derived_signals()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AiCapexDbContext>().UseSqlite(connection).Options;
+        await using var db = new AiCapexDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var quarter = new FiscalQuarter { Year = 2026, Quarter = 2, PeriodEnd = new DateOnly(2026, 6, 30) };
+        var company = new Company { Ticker = "MU", Name = "Micron", Segment = "Memory/HBM" };
+        db.FiscalQuarters.Add(quarter);
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var source = new SourceDocument
+        {
+            CompanyId = company.Id,
+            SourceType = SourceType.Transcript,
+            Provider = "EarningsCallBiz",
+            Title = "Micron call",
+            Summary = "Transcript summary",
+            Url = "https://example.com",
+            PublishedDate = quarter.PeriodEnd
+        };
+        db.SourceDocuments.Add(source);
+        db.FinancialMetrics.Add(new FinancialMetric
+        {
+            CompanyId = company.Id,
+            FiscalQuarterId = quarter.Id,
+            PeriodEndDate = quarter.PeriodEnd,
+            Kind = MetricKind.CapexAsPercentOfOperatingCashFlow,
+            MetricName = "Capex / OCF",
+            Value = 20,
+            Unit = "%"
+        });
+        await db.SaveChangesAsync();
+        db.IndicatorSignals.Add(new IndicatorSignal
+        {
+            CompanyId = company.Id,
+            FiscalQuarterId = quarter.Id,
+            Category = RiskScoreCategory.HbmDramPricingAllocation,
+            SignalName = "Transcript AI narrative signal",
+            Name = "Micron call",
+            ScoreImpact = 6,
+            Confidence = 90,
+            SourceDocumentId = source.Id,
+            Summary = "HBM remains tight."
+        });
+        await db.SaveChangesAsync();
+
+        var detail = await new AiCapexDataService(db).GetCompanyAsync("MU");
+
+        Assert.NotNull(detail);
+        Assert.Contains(detail.CurrentSignals, x => x.Name == "Micron call" && x.SourceLabel == "Transcript - EarningsCallBiz");
+        Assert.Contains(detail.CurrentSignals, x => x.Name == "Capex / OCF derived signal" && x.SourceLabel == "Derived financial metric");
+    }
 }

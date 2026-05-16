@@ -27,7 +27,7 @@ public sealed record CompanyDetailDto(
 
 public sealed record MetricDto(string Quarter, string Kind, decimal Value, string Unit);
 
-public sealed record SignalDto(string? Ticker, string Quarter, RiskScoreCategory Category, string Name, SignalDirection Direction, decimal ScoreImpact, string Summary);
+public sealed record SignalDto(string? Ticker, string Quarter, RiskScoreCategory Category, string Name, SignalDirection Direction, decimal ScoreImpact, string Summary, string SourceLabel);
 
 public sealed record CategoryStatusDto(RiskScoreCategory Category, decimal AverageSignal, string Status, string Summary);
 

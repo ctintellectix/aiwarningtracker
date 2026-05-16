@@ -11,7 +11,8 @@ public sealed record SecFactValue(
     DateOnly? EndDate,
     decimal Value,
     string SourceUrl,
-    string? AccessionNumber = null);
+    string? AccessionNumber = null,
+    DateOnly? StartDate = null);
 
 public sealed record SecExtractedMetric(
     string MetricName,

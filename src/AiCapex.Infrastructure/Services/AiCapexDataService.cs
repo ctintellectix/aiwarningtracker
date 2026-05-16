@@ -120,7 +120,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 "Capex / OCF derived signal",
                 DirectionFromImpact(impact),
                 impact,
-                $"Latest capex/OCF is {capexRatio.Value:0.0}%."));
+                $"Latest capex/OCF is {capexRatio.Value:0.0}%.",
+                "Derived financial metric"));
         }
 
         var capexGrowthValues = latestMetrics
@@ -138,7 +139,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 "Capex growth derived signal",
                 DirectionFromImpact(impact),
                 impact,
-                $"Latest capex growth average is {averageGrowth:0.0}%."));
+                $"Latest capex growth average is {averageGrowth:0.0}%.",
+                "Derived financial metric"));
         }
 
         return signals
@@ -191,6 +193,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         var signals = await db.IndicatorSignals
             .Include(x => x.Company)
             .Include(x => x.FiscalQuarter)
+            .Include(x => x.SourceDocument)
             .Where(x => x.CompanyId == company.Id)
             .Select(x => new SignalDto(
                 x.Company == null ? null : x.Company.Ticker,
@@ -199,7 +202,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 x.Name,
                 DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
                 SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
-                x.Summary))
+                x.Summary,
+                SourceLabel(x.SourceDocument)))
             .ToListAsync(cancellationToken);
         signals.AddRange(await GetCompanyDerivedSignalsAsync(company, cancellationToken));
         return signals.Select(ToDisplaySignalDto).ToList();
@@ -211,6 +215,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         var storedSignals = await db.IndicatorSignals
                 .Include(x => x.Company)
                 .Include(x => x.FiscalQuarter)
+                .Include(x => x.SourceDocument)
                 .Where(x => x.CompanyId == company.Id &&
                     x.FiscalQuarter != null &&
                     x.FiscalQuarter.PeriodEnd <= asOfPeriodEnd)
@@ -228,7 +233,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 x.Name,
                 DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
                 SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
-                x.Summary))
+                x.Summary,
+                SourceLabel(x.SourceDocument)))
             .ToList();
 
         var derivedSignals = (await GetCompanyDerivedSignalsAsync(company, cancellationToken)).ToList();
@@ -481,7 +487,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        return ToDisplaySignalDto(new SignalDto(company.Ticker, quarter.Label, category, signal.Name, direction, signal.ScoreImpact, signal.Summary));
+        return ToDisplaySignalDto(new SignalDto(company.Ticker, quarter.Label, category, signal.Name, direction, signal.ScoreImpact, signal.Summary, "Manual entry"));
     }
 
     private IQueryable<SignalDto> SignalQuery()
@@ -489,6 +495,7 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         return db.IndicatorSignals
             .Include(x => x.Company)
             .Include(x => x.FiscalQuarter)
+            .Include(x => x.SourceDocument)
             .Select(x => new SignalDto(
                 x.Company == null ? null : x.Company.Ticker,
                 x.FiscalQuarter!.Label,
@@ -496,7 +503,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 x.Name,
                 DisplayDirection(x.ScoreImpact, x.SignalName, x.Direction),
                 SignalScoreInterpreter.ToScoringSignal(x.ScoreImpact, x.SignalName),
-                x.Summary));
+                x.Summary,
+                SourceLabel(x.SourceDocument)));
     }
 
     private IQueryable<SourceDocumentDto> SourceQuery()
@@ -549,7 +557,8 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
                 $"{FormatCategoryName(x.Category)} derived signal",
                 DirectionFromImpact(x.AverageSignal),
                 x.AverageSignal,
-                x.Summary));
+                x.Summary,
+                "Category rollup"));
     }
 
     private static SignalDirection DirectionFromImpact(decimal impact) => impact switch
@@ -572,6 +581,28 @@ public sealed class AiCapexDataService(AiCapexDbContext db) : IAiCapexReadServic
         RiskScoreCategory.FinancialStressFreeCashFlow => "Financial stress/FCF",
         _ => category.ToString()
     };
+
+    private static string SourceLabel(SourceDocument? sourceDocument)
+    {
+        if (sourceDocument is null)
+        {
+            return "Imported signal";
+        }
+
+        var sourceType = sourceDocument.SourceType switch
+        {
+            SourceType.SecXbrl => "SEC XBRL",
+            SourceType.SecFiling => "SEC filing",
+            SourceType.Transcript => "Transcript",
+            SourceType.ManualEntry => "Manual entry",
+            SourceType.NewsRss => "RSS/news",
+            _ => sourceDocument.SourceType.ToString()
+        };
+
+        return string.IsNullOrWhiteSpace(sourceDocument.Provider)
+            ? sourceType
+            : $"{sourceType} - {sourceDocument.Provider}";
+    }
 
     private static string CategoryLabel(decimal signal) => signal switch
     {

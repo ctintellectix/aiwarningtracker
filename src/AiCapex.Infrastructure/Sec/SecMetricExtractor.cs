@@ -12,43 +12,48 @@ public static class SecMetricExtractor
             .ToList();
 
         var metrics = new List<SecExtractedMetric>();
+        var priorCapexFacts = new Dictionary<(int FiscalYear, string Unit), SecFactValue>();
+        var priorOperatingCashFlowFacts = new Dictionary<(int FiscalYear, string Unit), SecFactValue>();
         foreach (var group in quarterlyFacts)
         {
             var sourceUrl = group.First().SourceUrl;
             var periodEndDate = group.Select(x => x.EndDate).Where(x => x.HasValue).Max();
-            var capex = FirstValue(group,
+            var capex = FirstDurationFact(group,
                 "PaymentsToAcquirePropertyPlantAndEquipment",
                 "PaymentsToAcquireProductiveAssets",
                 "CapitalExpendituresIncurredButNotYetPaid",
                 "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities");
-            var ocf = FirstValue(group,
+            var ocf = FirstDurationFact(group,
                 "NetCashProvidedByUsedInOperatingActivities",
                 "CashFlowsFromUsedInOperations");
-            var revenue = FirstValue(group,
+            var revenue = FirstDurationFact(group,
                 "Revenues",
                 "SalesRevenueNet",
                 "Revenue");
-            var debt = FirstValue(group,
+            var debt = FirstInstantFact(group,
                 "LongTermDebt",
                 "LongTermDebtCurrent",
                 "ShortTermBorrowings",
                 "Borrowings",
                 "CurrentBorrowings",
                 "NoncurrentBorrowings");
+            var key = (group.Key.FiscalYear, group.Key.Unit);
+            var quarterlyCapex = QuarterlyCashFlowValue(capex, priorCapexFacts.GetValueOrDefault(key), group.Key.Quarter);
+            var quarterlyOcf = QuarterlyCashFlowValue(ocf, priorOperatingCashFlowFacts.GetValueOrDefault(key), group.Key.Quarter);
 
-            if (capex is not null)
+            if (quarterlyCapex is not null)
             {
-                metrics.Add(new SecExtractedMetric("Quarterly Capex", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, Math.Abs(capex.Value), group.Key.Unit, sourceUrl));
+                metrics.Add(new SecExtractedMetric("Quarterly Capex", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, Math.Abs(quarterlyCapex.Value), group.Key.Unit, sourceUrl));
             }
 
-            if (ocf is not null)
+            if (quarterlyOcf is not null)
             {
-                metrics.Add(new SecExtractedMetric("Operating Cash Flow", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, ocf.Value, group.Key.Unit, sourceUrl));
+                metrics.Add(new SecExtractedMetric("Operating Cash Flow", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, quarterlyOcf.Value, group.Key.Unit, sourceUrl));
             }
 
-            if (capex is not null && ocf is not null && ocf.Value != 0)
+            if (quarterlyCapex is not null && quarterlyOcf is not null && quarterlyOcf.Value != 0)
             {
-                metrics.Add(new SecExtractedMetric("Capex / OCF", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, Math.Round(Math.Abs(capex.Value) / Math.Abs(ocf.Value) * 100, 2), "%", sourceUrl));
+                metrics.Add(new SecExtractedMetric("Capex / OCF", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, Math.Round(Math.Abs(quarterlyCapex.Value) / Math.Abs(quarterlyOcf.Value) * 100, 2), "%", sourceUrl));
             }
 
             if (revenue is not null)
@@ -60,6 +65,16 @@ public static class SecMetricExtractor
             {
                 metrics.Add(new SecExtractedMetric("Debt", group.Key.FiscalYear, group.Key.Quarter, periodEndDate, debt.Value, group.Key.Unit, sourceUrl));
             }
+
+            if (capex is not null)
+            {
+                priorCapexFacts[key] = capex;
+            }
+
+            if (ocf is not null)
+            {
+                priorOperatingCashFlowFacts[key] = ocf;
+            }
         }
 
         AddGrowthMetrics(metrics, "Quarterly Capex");
@@ -67,15 +82,42 @@ public static class SecMetricExtractor
         return metrics;
     }
 
-    private static decimal? FirstValue(IEnumerable<SecFactValue> facts, params string[] tags) =>
+    private static SecFactValue? FirstDurationFact(IEnumerable<SecFactValue> facts, params string[] tags) =>
         facts.Where(x => tags.Contains(x.Tag, StringComparer.OrdinalIgnoreCase))
             .OrderBy(x => TaxonomyPriority(x.Taxonomy))
+            .ThenByDescending(x => x.EndDate)
+            .ThenBy(x => DurationDays(x))
             .ThenByDescending(x => x.FiledDate)
-            .Select(x => (decimal?)x.Value)
+            .FirstOrDefault();
+
+    private static SecFactValue? FirstInstantFact(IEnumerable<SecFactValue> facts, params string[] tags) =>
+        facts.Where(x => tags.Contains(x.Tag, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(x => TaxonomyPriority(x.Taxonomy))
+            .ThenByDescending(x => x.EndDate)
+            .ThenByDescending(x => x.FiledDate)
             .FirstOrDefault();
 
     private static int TaxonomyPriority(string taxonomy) =>
         taxonomy.Equals("us-gaap", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+
+    private static int DurationDays(SecFactValue fact) =>
+        fact.StartDate is not null && fact.EndDate is not null
+            ? fact.EndDate.Value.DayNumber - fact.StartDate.Value.DayNumber
+            : int.MaxValue;
+
+    private static decimal? QuarterlyCashFlowValue(SecFactValue? current, SecFactValue? prior, int quarter)
+    {
+        if (current is null)
+        {
+            return null;
+        }
+
+        // SEC interim cash-flow facts are commonly year-to-date values. Convert
+        // Q2-Q4 cumulative values into standalone quarters before storing them.
+        return quarter > 1 && prior is not null
+            ? current.Value - prior.Value
+            : current.Value;
+    }
 
     private static bool TryQuarter(string fiscalPeriod, out int quarter) =>
         int.TryParse(fiscalPeriod.TrimStart('Q', 'q'), out quarter) && quarter is >= 1 and <= 4;
