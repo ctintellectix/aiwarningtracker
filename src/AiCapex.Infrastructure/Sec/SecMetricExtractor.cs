@@ -29,6 +29,7 @@ public static class SecMetricExtractor
             var revenue = FirstDurationFact(group,
                 "Revenues",
                 "SalesRevenueNet",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
                 "Revenue");
             var debt = FirstInstantFact(group,
                 "LongTermDebt",
@@ -137,7 +138,7 @@ public static class SecMetricExtractor
                 continue;
             }
 
-            var annualRevenue = FirstDurationFact(annualGroup, "Revenues", "SalesRevenueNet", "Revenue");
+            var annualRevenue = FirstDurationFact(annualGroup, "Revenues", "SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenue");
             var annualCapex = FirstDurationFact(
                 annualGroup,
                 "PaymentsToAcquirePropertyPlantAndEquipment",

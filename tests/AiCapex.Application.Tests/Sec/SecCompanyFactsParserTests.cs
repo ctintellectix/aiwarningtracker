@@ -116,6 +116,19 @@ public class SecCompanyFactsParserTests
     }
 
     [Fact]
+    public void Extracts_revenue_from_contract_with_customer_tag()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax", "USD", 2026, "Q1", "10-Q", DateOnly.Parse("2025-11-07"), DateOnly.Parse("2025-10-03"), 2308m, "url", null, DateOnly.Parse("2025-06-28"))
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Revenue" && metric.Value == 2308m);
+    }
+
+    [Fact]
     public void Prefers_us_gaap_when_same_period_has_us_gaap_and_ifrs_values()
     {
         var facts = new[]

@@ -13,6 +13,7 @@ public static class SecCompanyFactsParser
         "NetCashProvidedByUsedInOperatingActivities",
         "Revenues",
         "SalesRevenueNet",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
         "LongTermDebt",
         "LongTermDebtCurrent",
         "ShortTermBorrowings",
