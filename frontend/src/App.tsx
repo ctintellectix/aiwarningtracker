@@ -118,7 +118,7 @@ function CompanyPage({ ticker, refreshKey }: { ticker: string; refreshKey: numbe
     <>
       <Header title={`${company.ticker} - ${company.name}`} subtitle={company.segment} />
       <section className="grid three">
-        <MetricCard label="Latest momentum signal" value={company.latestMomentumSignal.toFixed(1)} tooltip={tooltips.companyRiskSignal} />
+        <MomentumMetricCard value={company.latestMomentumSignal} />
         <MetricCard label="Signal count" value={signals.length.toString()} tooltip={tooltips.signalCount} />
         <MetricCard label="Source docs" value={sources.length.toString()} tooltip={tooltips.sourceDocs} />
       </section>
@@ -312,6 +312,15 @@ function Header({ title, subtitle }: { title: string; subtitle: string }) {
 
 function MetricCard({ label, value, text = false, tooltip }: { label: string; value: string; text?: boolean; tooltip?: string }) {
   return <article className="metric"><span className="labelWithTooltip">{label}{tooltip && <TooltipIcon text={tooltip} />}</span><strong className={text ? "textValue" : ""}>{value}</strong></article>;
+}
+
+function MomentumMetricCard({ value }: { value: number }) {
+  return (
+    <article className="metric">
+      <span className="labelWithTooltip">Latest momentum signal<TooltipIcon text={tooltips.companyRiskSignal} /></span>
+      <strong className={signalToneClass(value)}>{signalBandLabel(value)} {signed(Number(value.toFixed(1)))}</strong>
+    </article>
+  );
 }
 
 function SignalList({ title, signals }: { title: string; signals: DashboardSummary["topPositiveIndicators"] }) {

@@ -35,6 +35,9 @@ public static class SecMetricExtractor
                 "LongTermDebt",
                 "LongTermDebtCurrent",
                 "ShortTermBorrowings",
+                "DebtLongtermAndShorttermCombinedAmount",
+                "DebtAndCapitalLeaseObligations",
+                "DebtCurrent",
                 "Borrowings",
                 "CurrentBorrowings",
                 "NoncurrentBorrowings");

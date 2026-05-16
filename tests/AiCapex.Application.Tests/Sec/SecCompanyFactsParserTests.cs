@@ -129,6 +129,33 @@ public class SecCompanyFactsParserTests
     }
 
     [Fact]
+    public void Extracts_debt_from_combined_debt_fallback_tag()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "DebtLongtermAndShorttermCombinedAmount", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2026-03-11"), DateOnly.Parse("2026-02-28"), 43000m, "url")
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Debt" && metric.Value == 43000m);
+    }
+
+    [Fact]
+    public void Prefers_primary_long_term_debt_over_fallback_debt_tags()
+    {
+        var facts = new[]
+        {
+            new SecFactValue("us-gaap", "LongTermDebt", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2026-03-11"), DateOnly.Parse("2026-02-28"), 40000m, "url"),
+            new SecFactValue("us-gaap", "DebtLongtermAndShorttermCombinedAmount", "USD", 2026, "Q3", "10-Q", DateOnly.Parse("2026-03-11"), DateOnly.Parse("2026-02-28"), 43000m, "url")
+        };
+
+        var metrics = SecMetricExtractor.Extract(facts).ToList();
+
+        Assert.Contains(metrics, metric => metric.MetricName == "Debt" && metric.Value == 40000m);
+    }
+
+    [Fact]
     public void Prefers_us_gaap_when_same_period_has_us_gaap_and_ifrs_values()
     {
         var facts = new[]
