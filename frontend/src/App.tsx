@@ -71,7 +71,7 @@ function Dashboard({ go, refreshKey }: { go: (path: string) => void; refreshKey:
       <section className="scoreBand">
         <div className="scoreDial">
           <div className="labelWithTooltip">
-            <span className="scoreValue">{data.currentRiskScore}</span>
+            <span className={`scoreValue ${scoreTextClass(data.currentRiskScore)}`}>{data.currentRiskScore}</span>
             <TooltipIcon text={tooltips.riskScore} />
           </div>
           <small>{data.riskBand}</small>
@@ -322,14 +322,7 @@ function SignalList({ title, signals }: { title: string; signals: DashboardSumma
         <p className="emptyState">No directional score drivers yet. Run imports or add manual signals with non-zero score impact.</p>
       ) : (
         <div className="stack">
-          {signals.map((s) => (
-            <article className="signal" key={`${s.name}-${s.ticker}`}>
-              <strong>{s.ticker ? `${s.ticker} - ${s.name}` : s.name}</strong>
-              {s.ticker && <small>{labelCategory(s.category)}</small>}
-              <span className={s.direction.toLowerCase()} title={tooltips.signalImpact}>{s.direction} {signed(s.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} /></span>
-              <p>{s.summary}</p>
-            </article>
-          ))}
+          {signals.map((s) => <SignalItem key={`${s.name}-${s.ticker}`} signal={s} />)}
         </div>
       )}
     </section>
@@ -352,10 +345,23 @@ function CollapsibleSignalList({ title, signals }: { title: string; signals: Das
         signals.length === 0 ? (
           <p className="emptyState">No historical signals yet.</p>
         ) : (
-          <div className="stack">{signals.map((s) => <article className="signal" key={`${s.name}-${s.ticker}-${s.quarter}`}><strong>{s.name}</strong><span className={s.direction.toLowerCase()} title={tooltips.signalImpact}>{s.direction} {signed(s.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} /></span><p>{s.summary}</p></article>)}</div>
+          <div className="stack">{signals.map((s) => <SignalItem key={`${s.name}-${s.ticker}-${s.quarter}`} signal={s} />)}</div>
         )
       )}
     </section>
+  );
+}
+
+function SignalItem({ signal }: { signal: DashboardSummary["topPositiveIndicators"][number] }) {
+  return (
+    <article className="signal">
+      <strong>{signal.ticker ? `${signal.ticker} - ${signal.name}` : signal.name}</strong>
+      {signal.ticker && <small>{labelCategory(signal.category)}</small>}
+      <span className={signalToneClass(signal.scoreImpact)} title={tooltips.signalImpact}>
+        {signalBandLabel(signal.scoreImpact)} {signed(signal.scoreImpact)} <TooltipIcon text={tooltips.signalImpact} />
+      </span>
+      <p>{signal.summary}</p>
+    </article>
   );
 }
 
@@ -453,12 +459,28 @@ function signalToneClass(score: number) {
   return "neutral";
 }
 
+function signalBandLabel(score: number) {
+  if (score <= -6) return "Very bearish";
+  if (score < -1) return "Bearish";
+  if (score <= 1) return "Neutral";
+  if (score < 6) return "Bullish";
+  return "Very bullish";
+}
+
 function scoreClass(score: number) {
   if (score <= 19) return "scoreRollover";
   if (score <= 39) return "scoreSlowdown";
   if (score <= 59) return "scoreWatch";
   if (score <= 79) return "scoreHealthy";
   return "scoreBullish";
+}
+
+function scoreTextClass(score: number) {
+  if (score <= 19) return "scoreTextRollover";
+  if (score <= 39) return "scoreTextSlowdown";
+  if (score <= 59) return "scoreTextWatch";
+  if (score <= 79) return "scoreTextHealthy";
+  return "scoreTextBullish";
 }
 
 function formatJobResult(job: ImportJob) {

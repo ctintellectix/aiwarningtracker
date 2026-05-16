@@ -177,7 +177,26 @@ header p, .metric span, td, .signal p, .panel p {
 .scoreValue {
   font-size: 64px;
   font-weight: 800;
+}
+
+.scoreTextBullish {
+  color: #047857;
+}
+
+.scoreTextHealthy {
+  color: #0f766e;
+}
+
+.scoreTextWatch {
+  color: #d97706;
+}
+
+.scoreTextSlowdown {
   color: #b45309;
+}
+
+.scoreTextRollover {
+  color: #b91c1c;
 }
 
 .scoreDial small {
